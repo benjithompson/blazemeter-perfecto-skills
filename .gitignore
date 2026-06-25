@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+
+# Local agent / editor state
+.scratch/
+.claude/settings.local.json
+
+# Secrets & env
+.env
+.env.*
+!.env.example
+
+# Dependencies / build (adjust once implementation stack is chosen)
+node_modules/
+dist/
+build/
+__pycache__/
+*.pyc
+.venv/
