@@ -1,4 +1,4 @@
-# PerforceTestingMCP
+# BlazeMeter & Perfecto Skills
 
 > A shared library of Claude Code **skills and commands** for getting more value out of
 > Perforce's testing platforms via their MCP servers.
