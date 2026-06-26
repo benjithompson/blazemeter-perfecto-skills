@@ -43,7 +43,7 @@ Do this **for each of the two executions**. Chain these calls — each response 
 
 **Completion gate:** an execution is only comparable once finished — in `blazemeter_execution read`, **`ended` must be NOT null** (`ended == null` ⇒ still running). If either run is still running, stop and say which one isn't done; comparing a partial run produces misleading KPIs.
 
-**AI Consent gate:** AI access is gated **per account**. Check the consent state from step 5 for **each** execution's account. If an account has **not** enabled AI consent, stop with a clear message — e.g. `Account <name> (<id>) has not enabled AI consent` — rather than proceeding into the comparison.
+**AI Consent gate:** AI access is gated **per account**. Check the consent state from step 4 for **each** execution's account. If an account has **not** enabled AI consent, stop with a clear message — e.g. `Account <name> (<id>) has not enabled AI consent` — rather than proceeding into the comparison.
 
 **Cross-account / cross-test comparison:** the two executions need not share an account, workspace, project, or even test. Resolving both hierarchies independently is what surfaces this. If they differ, that's allowed but **call it out explicitly** in the output (you may be comparing a run from a different scenario) and disambiguate same-named entities by their ids.
 
