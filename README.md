@@ -17,8 +17,11 @@ issues.
 | Skill | What it does |
 | --- | --- |
 | `analyze-blazemeter-test` | Analyzes a test's full execution history — response-time trends, regressions, tail-latency, error patterns, anomalies, per-endpoint hot spots, and SLA/failure-criteria compliance — and delivers a QA performance assessment. |
+| `run-blazemeter-test` | Runs a test end-to-end — optionally sets a simple load profile (with confirmation), starts the execution, polls to completion, and reports a pass/fail summary against the test's failure criteria. |
+| `compare-blazemeter-runs` | Compares two executions (baseline vs candidate) — diffs response-time percentiles, throughput, and error rate with magnitude and direction, flags regressions past a threshold, and emits a ship / no-ship verdict. |
+| `triage-blazemeter-failure` | Deep-dives one failed or regressed run — breaks errors down by type and endpoint, ranks endpoint hot spots, summarizes anomalies, separates systemic problems from noise, and ends with prioritized next steps. |
 
-Invoked (namespaced) as **`blazemeter-perfecto:analyze-blazemeter-test`**.
+Each is invoked (namespaced) as **`blazemeter-perfecto:<skill-name>`**, e.g. `blazemeter-perfecto:run-blazemeter-test`.
 
 ## Prerequisites
 
