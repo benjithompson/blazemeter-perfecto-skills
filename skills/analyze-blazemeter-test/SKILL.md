@@ -76,7 +76,7 @@ blazemeter_execution read_anomalies_stats  { execution_id: <id> }
 - **errors** — error breakdown by type, count, and percentage
 - **request_stats** — per-endpoint (label) breakdown of the same KPIs
 
-Also call `blazemeter_execution read` to get failure criteria results and status per execution.
+Also call `blazemeter_execution read` per execution to get its overall `execution_status` and `ended` timestamp. This response carries **only the overall pass/fail verdict** — not per-criterion results and not the criteria's `meta` labels. The failure-criteria **definitions** (`failure_criteria.rules[]`) and their readable `meta.*` labels come from the **test object** you already fetched in Step 0 (`blazemeter_tests read`). The MCP exposes no per-criterion per-run results array, so per-run criterion outcomes are inferred in Step 3f by comparing each run's summary KPIs against those thresholds.
 
 ## Step 3 — Analyze as a QA Performance Engineer
 
@@ -107,9 +107,9 @@ From `read_anomalies_stats`:
 - List recurring anomaly KPIs or time windows — a KPI that fires anomalies in 3+ runs is a systemic signal, not noise.
 
 ### 3f. SLA / failure criteria compliance
-From `blazemeter_execution read` status + failure criteria fields:
-- How many runs PASSED vs FAILED their criteria?
-- Which specific criteria are failing and how often?
+The overall pass/fail per run is its `execution_status` (from `blazemeter_execution read`); the criteria **definitions** + readable labels come from the test object (Step 0's `blazemeter_tests read` → `failure_criteria.rules[]` + `failure_criteria.meta.*`). The MCP returns no per-criterion per-run results, so attribute *which* criterion drove a failure by comparing each run's summary KPIs against the test's thresholds (e.g. an `error rate % > 4` rule against a run whose `error_rate_percent` is 26.67% → violated).
+- How many runs PASSED vs FAILED overall (from `execution_status`)?
+- Which specific criteria were likely driven past threshold (KPI-vs-threshold inference), and how often?
 
 ### 3g. Per-endpoint hot spots
 From `request_stats` across runs:
@@ -158,5 +158,5 @@ Prioritized, actionable items a developer/SRE could act on this sprint.
 - **Skipping non-ENDED runs**: `TERMINATED` runs have incomplete data; including them distorts averages.
 - **Load config changes**: if concurrency or duration changed between runs, note this — apples-to-apples comparison requires normalized throughput (RPS per virtual user).
 - **`statistics_unavailable` anomalies**: this means the run was too short for the anomaly engine to build a baseline — not a signal, just insufficient data.
-- **Failure criteria labels**: use `meta.general_labels`, `meta.rule_field_labels`, `meta.kpi_labels`, and `meta.condition_labels` when presenting failure criteria — never raw kpi ids or op codes.
+- **Failure criteria live on the test, not the execution**: `blazemeter_execution read` returns only the overall `execution_status`. The criteria definitions and their readable labels (`meta.general_labels`, `meta.rule_field_labels`, `meta.kpi_labels`, `meta.condition_labels`) come from the **test object** (Step 0's `blazemeter_tests read`) — render with those labels, never raw kpi ids or op codes, and infer per-run criterion outcomes from summary KPIs vs the test's thresholds.
 - **Parallel fetches**: `read_all_reports` and `read_anomalies_stats` are independent per execution — call them in parallel to keep wall-clock time reasonable when analyzing many runs.
