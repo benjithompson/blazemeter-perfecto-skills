@@ -1,0 +1,8 @@
+<svg class="brand-logo" viewBox="0 0 232 40" role="img" aria-label="BlazeMeter (approximated)" xmlns="http://www.w3.org/2000/svg">
+  <rect x="0" y="2" width="36" height="36" rx="9" fill="var(--brand-primary)"/>
+  <path d="M20 8 L13 22 h6 l-3 10 11 -15 h-6 z" fill="#ffffff"/>
+  <text x="46" y="20" font-family="var(--brand-font)" font-size="17" font-weight="700"
+        letter-spacing="0.5" fill="var(--brand-text)">BlazeMeter</text>
+  <text x="46" y="33" font-family="var(--brand-font)" font-size="9" font-weight="600"
+        letter-spacing="2.4" fill="var(--brand-muted)">PERFORMANCE&#160;REPORT</text>
+</svg>
