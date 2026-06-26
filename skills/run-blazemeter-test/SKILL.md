@@ -53,29 +53,41 @@ If any link in the chain fails (e.g. a project_id is missing from the test respo
 
 This is **optional** and only happens when the user asks to change the load *or* explicitly approves a suggested profile. `configure_load` **mutates the user's saved test configuration** — never call it silently or on your own initiative. If the user just wants to run the test as-is, **skip straight to Step 2** and run with whatever load is already configured.
 
-If the user does want a simple profile, gather the four knobs and confirm them back **before** the call:
+If the user does want a simple profile, gather the knobs and confirm them back **before** the call. `hold-for` and `iterations` are **mutually exclusive** — per the MCP, *"don't use iterations if hold-for is provided"* — so pick **one** way to bound the run:
+
+**Timed run (the usual choice)** — bound the run by duration with `hold-for`:
 
 ```
 blazemeter_tests configure_load {
   test_id:     <id>,
   concurrency: <virtual users>,
-  ramp-up:     <e.g. "30s" or "1m">,
-  hold-for:    <e.g. "1m">,
-  iterations:  <optional iteration cap>
+  ramp-up:     <e.g. "1m">,
+  hold-for:    <e.g. "1m">
+}
+```
+
+**Iteration-capped run (alternative)** — instead bound the run by a fixed number of iterations per user, with **no** `hold-for`:
+
+```
+blazemeter_tests configure_load {
+  test_id:     <id>,
+  concurrency: <virtual users>,
+  ramp-up:     <e.g. "1m">,
+  iterations:  <iterations per user>
 }
 ```
 
 - **`concurrency`** — number of virtual users.
-- **`ramp-up`** — how long to ramp from 0 to full concurrency.
-- **`hold-for`** — how long to *stay* at full concurrency. **This is what actually bounds the run's duration.**
-- **`iterations`** — optional cap on iterations per user.
+- **`ramp-up`** — how long to ramp from 0 to full concurrency. Specified in **minutes** (e.g. `"1m"`).
+- **`hold-for`** — how long to *stay* at full concurrency. **This is what actually bounds a timed run's duration.** Specified in **minutes** (e.g. `"1m"`). Don't combine it with `iterations`.
+- **`iterations`** — an alternative bound: a fixed iteration count per user instead of a held duration. Use it *only* when you are **not** setting `hold-for`.
 
-**Quick / validation default (suggest, then confirm):** for a smoke or sanity run, propose minimal load — **concurrency 1, hold-for "1m"** (a short ramp-up like "10s" is fine). State the profile in plain language and get a yes before calling `configure_load`. Example:
+**Quick / validation default (suggest, then confirm):** for a smoke or sanity run, propose minimal load — **concurrency 1, hold-for "1m"** (a short ramp-up like "1m" is fine). State the profile in plain language and get a yes before calling `configure_load`. Example:
 
 ```
 Proposed load profile (a quick validation run):
   concurrency: 1 user
-  ramp-up:     10s
+  ramp-up:     1m
   hold-for:    1m
 This will overwrite the test's current load settings. Apply it? (yes / no / different numbers)
 ```
@@ -114,24 +126,26 @@ Do **not** rely on a status string to detect completion — `ended` going non-nu
 Once `ended` is non-null, gather the outcome:
 
 ```
-blazemeter_execution read          { execution_id: <id> }   # execution_status + failure-criteria results
-blazemeter_execution read_summary  { execution_id: <id> }   # aggregate KPIs
+blazemeter_execution read          { execution_id: <id> }   # overall execution_status only
+blazemeter_execution read_summary  { execution_id: <id> }   # aggregate KPIs (overall_metrics)
 ```
 
-Interpret `execution_status` precisely:
+The overall pass/fail verdict is `execution_status` from `blazemeter_execution read`. Interpret it precisely:
 
 | `execution_status` | Meaning |
 |---|---|
 | `pass` | All defined failure criteria were met. |
-| `fail` | At least one failure criterion was violated (list which). |
+| `fail` | At least one failure criterion was violated (explain which — see below). |
 | `unset` | **No failure criteria are defined ⇒ indeterminate, NOT a pass.** Say the run completed but there were no criteria to judge it against. |
 | `abort` | The run was aborted before completing. |
 | `error` | The run errored out. |
 | `noData` | The run produced no data to evaluate. |
 
-**Render failure criteria with readable labels, never raw ids/op codes.** When showing which criteria passed or failed (from the `read` response), use `meta.general_labels`, `meta.rule_field_labels`, `meta.kpi_labels`, and `meta.condition_labels` — e.g. "95th percentile response time > 2000 ms", not a kpi id and op code.
+**The failure-criteria definitions and their readable labels come from the TEST object you already read in Step 0** (`blazemeter_tests read` returns `failure_criteria.rules[]` plus `failure_criteria.meta`), **not** from `blazemeter_execution read` (which only carries the overall `execution_status`). Render each criterion with its labels — `meta.general_labels`, `meta.rule_field_labels`, `meta.kpi_labels`, and `meta.condition_labels` — e.g. "95th percentile response time > 2000 ms", never a raw kpi id and op code.
 
-From `read_summary`, pull the headline KPIs: avg / p90 / p95 response time, throughput (RPS), error rate %, peak concurrency.
+**There is no per-criterion per-run results array in the MCP.** `blazemeter_execution read` gives only the single overall `execution_status` — it does **not** return a pass/fail flag for each individual criterion. So when the overall status is `fail`, **explain the verdict by comparing this run's `read_summary` KPIs against the criteria thresholds** from the test object. For example: a criterion of "error rate % > 4" against a run whose `read_summary.overall_metrics.error_rate_percent` is 26.67% → that threshold was violated. Match each criterion's KPI to the corresponding `overall_metrics` field (e.g. `percentile_95_ms` for a p95 criterion, `error_rate_percent` for an error-rate criterion, `average_response_time_ms` for an avg-RT criterion) and show actual-vs-threshold. Present this as your reasoned interpretation, not as data the API returned per criterion.
+
+From `read_summary` → `result[0].overall_metrics`, pull the headline KPIs: `average_response_time_ms`, `percentile_90_ms`, `percentile_95_ms`, `average_throughput_per_second` (RPS), `error_rate_percent`, and `max_concurrent_users` (achieved peak concurrency).
 
 ## Output template
 
@@ -142,9 +156,10 @@ From `read_summary`, pull the headline KPIs: avg / p90 / p95 response time, thro
 **Execution:** <execution_id>   |   **Report:** <execution_url>
 **Duration:** <started> → <ended>
 
-### Load profile used
-- Concurrency: <N> users   |   Ramp-up: <…>   |   Hold-for: <…>   |   Iterations: <… or n/a>
-  (note if this skill changed it this run, or "ran as previously configured")
+### Load profile
+- Configured: Concurrency: <N> users   |   Ramp-up: <…>   |   Hold-for: <…>   |   Iterations: <… or n/a>
+  (source: the test's `override_executions[]` from `blazemeter_tests read` in Step 0 — `concurrency`, `holdFor`, `rampUp`, `iterations`; note "configured this run" if this skill set it via `configure_load`, otherwise "as previously configured")
+- Achieved peak concurrency: <max_concurrent_users from read_summary.overall_metrics>
 
 ### Headline KPIs
 | Avg RT | p90 | p95 | RPS | Error % | Peak users |
@@ -152,7 +167,8 @@ From `read_summary`, pull the headline KPIs: avg / p90 / p95 response time, thro
 | …      | …   | …   | …   | …       | …          |
 
 ### Failure criteria
-- <criterion in readable labels> — <met / VIOLATED (actual vs threshold)>
+(definitions + labels from the test's `failure_criteria` in Step 0; overall verdict is `execution_status`. The per-criterion read below is *your* comparison of this run's KPIs against each threshold — the MCP returns no per-criterion result.)
+- <criterion in readable labels> — <within threshold / VIOLATED> (actual KPI from read_summary vs threshold)
 - …
   (if execution_status == unset: "No failure criteria defined — result is indeterminate, not a pass.")
 
@@ -162,11 +178,14 @@ From `read_summary`, pull the headline KPIs: avg / p90 / p95 response time, thro
 
 ## Gotchas
 
-- **`hold-for` bounds the run; `iterations` alone does not.** Setting only `iterations` leaves any previously-saved large `holdFor` in place, so the test keeps holding for that full window and the run runs long. To bound a run, set `hold-for` explicitly (e.g. `"1m"`). A quick validation default is concurrency 1, hold-for "1m".
+- **`hold-for` bounds the run; `iterations` alone does not.** Setting only `iterations` leaves any previously-saved large `holdFor` in place, so the test keeps holding for that full window and the run runs long. To bound a timed run, set `hold-for` explicitly (e.g. `"1m"`). A quick validation default is concurrency 1, hold-for "1m".
+- **`hold-for` and `iterations` are mutually exclusive.** Per the MCP, *"don't use iterations if hold-for is provided"* — never pass both in one `configure_load` call. Use `hold-for` for a timed run, or `iterations` (with no `hold-for`) for an iteration-capped run.
+- **Load durations are minute-granular.** `ramp-up` and `hold-for` are specified in minutes (e.g. `"1m"`), not seconds.
 - **`configure_load` mutates the saved test.** It overwrites the test's stored load settings — only call it with explicit user confirmation, and echo back the resulting profile.
 - **Completion = `ended != null`, not a status string.** While running, `ended` is `null`; the textual `execution_status` can read intermediate or empty values mid-run. Only treat the run as finished when `ended` becomes non-null.
 - **`execution_status: unset` is not a pass.** It means the test has **no failure criteria defined**, so there was nothing to judge against — report it as indeterminate and suggest defining criteria, rather than implying success.
 - **Distinguish the non-pass statuses.** `abort` (stopped early), `error` (run errored), and `noData` (nothing to evaluate) are each different from a clean `fail` — name which one occurred so the user knows whether to re-run or investigate.
+- **Failure criteria live on the TEST, not the execution.** The criteria definitions and their readable labels come from `blazemeter_tests read` (`failure_criteria.rules[]` + `failure_criteria.meta.*`), captured in Step 0. `blazemeter_execution read` returns only the single overall `execution_status` — no per-criterion results, no criteria definitions. Explain a `fail` by comparing the run's `read_summary` KPIs against the test's thresholds.
 - **Use label fields for criteria.** Always render failure criteria via `meta.general_labels`, `meta.rule_field_labels`, `meta.kpi_labels`, and `meta.condition_labels` — never raw kpi ids or operator codes.
 - **Starting a run costs minutes/credits.** `blazemeter_execution start` consumes the account's test resources — confirm the test (and load) before starting; don't start speculatively.
 - **Surface `execution_url` early.** Give the user the live report link right after `start` so they can watch progress in the BlazeMeter UI while you poll.
