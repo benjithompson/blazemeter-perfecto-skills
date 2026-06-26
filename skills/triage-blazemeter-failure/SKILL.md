@@ -29,38 +29,37 @@ Regardless of how the execution was identified, always resolve and display its f
 
 ```
 1. blazemeter_execution read     { execution_id: <id> }
-   → captures: execution status, ended timestamp, test_id
+   → captures: execution_status, ended timestamp, project_id, execution_name
+     (execution_name is the test's display name; note the execution API does NOT
+      expose test_id, so there is no tests-read hop on this path)
 
-2. blazemeter_tests read         { test_id: <test_id from step 1> }
-   → captures: test name, project_id
-
-3. blazemeter_project read       { project_id: <project_id from step 2> }
+2. blazemeter_project read       { project_id: <project_id from step 1> }
    → captures: project name, workspace_id
 
-4. blazemeter_workspaces read    { workspace_id: <workspace_id from step 3> }
+3. blazemeter_workspaces read    { workspace_id: <workspace_id from step 2> }
    → captures: workspace name, account_id
 
-5. blazemeter_account read       { account_id: <account_id from step 4> }
+4. blazemeter_account read       { account_id: <account_id from step 3> }
    → captures: account name, AI-consent state
 ```
 
-**AI Consent gate:** if the account has **not** enabled AI consent (from step 5), stop with a clear message — e.g. `Account <name> (<id>) has not enabled AI consent` — rather than proceeding into triage.
+**AI Consent gate:** if the account has **not** enabled AI consent (from step 4), stop with a clear message — e.g. `Account <name> (<id>) has not enabled AI consent` — rather than proceeding into triage.
 
 Present the resolved context to the user before continuing:
 
 ```
 Execution:  <execution_id>  (status: <execution_status>, ended: <ended timestamp>)
-Test:       <test name>  (ID: <test_id>)
+Test:       <execution_name>  (test_id not exposed by the execution API)
 Project:    <project name>  (ID: <project_id>)
 Workspace:  <workspace name>  (ID: <workspace_id>)
 Account:    <account name>  (ID: <account_id>)
 ```
 
-If any link in the chain fails (e.g. a `test_id` or `project_id` is missing from a response), **stop and report the gap** — do not proceed against an unverified context. Once confirmed, carry this account/workspace forward for later skills in the same conversation (display it, allow a one-step "switch"); this is conversational memory, not stored state.
+If a link in the chain fails — a `project_id`, `workspace_id`, or `account_id` is missing from a response, or a `read` returns 403 — **stop and report the gap** rather than proceeding against an unverified context. (Do **not** stop because `test_id` is absent: the execution API never returns one, so it's always missing here. If the user wants test-level enrichment — configured load, failure-criteria thresholds — ask them for the `test_id`.) Once confirmed, carry this account/workspace forward for later skills in the same conversation (display it, allow a one-step "switch"); this is conversational memory, not stored state.
 
 ### Step 0c — Confirm the run is actually finished and worth triaging
 
-From the `blazemeter_execution read` in step 0b:
+From the `blazemeter_execution read` in step 0b (which carries `execution_status` and `ended`):
 
 - **Completion:** the run is finished only when the **`ended` field is NOT null**. If `ended == null`, the run is still in progress — stop and tell the user to re-run triage once it ends, rather than diagnosing partial data.
 - **Status sanity-check** — `execution_status` ∈ `pass | fail | unset | abort | error | noData`:
@@ -80,7 +79,7 @@ blazemeter_execution read_anomalies_stats { execution_id: <id> }   # anomaly det
 blazemeter_execution read_summary         { execution_id: <id> }   # aggregate KPIs for the run
 ```
 
-Also reuse the `blazemeter_execution read` response from Step 0b for the **failure-criteria results** (the per-criterion pass/fail that explains the `execution_status` verdict).
+The `execution_status` from Step 0b's `blazemeter_execution read` is the **overall pass/fail verdict** for the run. Note the per-criterion thresholds and their readable labels are **not** on the execution — they live on the test object (reachable only with a `test_id`, which the execution API doesn't expose). Explain the verdict from the run's KPIs (Step 2e); if the user supplies the `test_id`, `blazemeter_tests read` can enrich it with exact thresholds.
 
 What each report gives you:
 - **read_errors** — error breakdown by type/response-code and by endpoint (label): counts and the responses' messages.
@@ -100,7 +99,7 @@ From `read_errors`:
 ### 2b. Endpoint hot-spot ranking
 From `read_request_stats`:
 - **By p95 (latency):** rank endpoints by p95 response time, slowest first — these are where users feel pain.
-- **By error contribution:** rank endpoints by their share of total errors (error count × ... weight toward absolute count, but surface a low-traffic endpoint with a near-100% error rate too — it may be fully broken).
+- **By error contribution:** rank endpoints by their share of total errors — each endpoint's `errors_count / total_errors`. **Also** surface any low-traffic endpoint with a near-100% `errors_rate_percent`, even if its absolute count is small — it may be fully broken while hiding behind a low sample count.
 - Cross-reference the two rankings. An endpoint that tops **both** lists is the strongest single lead.
 
 ### 2c. Anomaly summary
@@ -115,25 +114,27 @@ Synthesize 2a–2c into a judgment for each notable signal:
 - **Likely NOISE / one-off** — a single isolated sample, a lone transient timeout, an error on one low-traffic label with no anomaly and no spread. Name it explicitly as probable noise so the team doesn't chase it.
 - When the evidence is thin (e.g. `statistics_unavailable`, or a `noData` / `unset` run), say the verdict is **inconclusive** rather than forcing a systemic/noise call.
 
-### 2e. Failure-criteria explanation
-From the `blazemeter_execution read` failure criteria:
-- List exactly **which criteria failed** and by how much (actual vs. threshold), so the `execution_status` verdict is explained, not just stated.
-- When presenting criteria, use the label fields — `meta.general_labels`, `meta.rule_field_labels`, `meta.kpi_labels`, `meta.condition_labels` — **never** raw kpi ids or op codes.
+### 2e. Explain the verdict
+- State the overall `execution_status` (from Step 0b) as the run's verdict — `fail`, `abort`, `error`, etc.
+- Explain **why it likely failed** from the run's own KPIs: point at the metrics most likely to have tripped criteria — e.g. `error_rate_percent` from `read_summary`, or a per-endpoint `percentile_95_ms` / `errors_rate_percent` from `read_request_stats` — and say which look out of line.
+- Be explicit that this is an **inference from observed KPIs**, not a read of the configured criteria. The exact failure-criteria thresholds and their readable meta labels (`meta.general_labels`, `meta.rule_field_labels`, `meta.kpi_labels`, `meta.condition_labels`) live on the **test object** and are **not reachable from an execution alone** — there's no `test_id` on this path. If the user wants the criteria spelled out (actual vs. threshold, by name), ask them for the `test_id` so `blazemeter_tests read` can supply them.
 
 ## Step 3 — Deliver the triage report
 
 Structure the output as:
 
 ```
-## BlazeMeter Failure Triage: <test name> — execution <execution_id>
+## BlazeMeter Failure Triage: <execution_name> — execution <execution_id>
 **Status:** <execution_status>  |  **Ended:** <ended timestamp>  |  **Account:** <account name> (<account_id>)
 
 ### Verdict
 2–3 sentences: what failed, the single most likely root cause, and whether it looks systemic or like noise.
 
-### Failure Criteria
-- Failed criteria: <criterion (actual vs threshold)> ...
-- (or: "No criteria defined — status is `unset`, no SLA verdict")
+### Why It Failed
+- Verdict: status is `<execution_status>`.
+- Likely-violated thresholds (inferred from run KPIs): <e.g. overall error_rate_percent N%, /checkout p95 N ms> ...
+- (or: "Status is `unset` — no failure criteria defined, so no SLA verdict")
+- Exact criteria (thresholds + labels) live on the test object — not reachable from an execution alone; supply a `test_id` to enrich.
 
 ### Error Breakdown
 **By type**
@@ -171,6 +172,6 @@ Structure the output as:
 - **`statistics_unavailable` anomalies:** the run was too short for the anomaly engine to build a baseline — this is **insufficient data, not a signal**. Never present it as "no anomalies" or as anomalies found.
 - **Absolute vs. relative error counts:** rank endpoints by both. A high-traffic label can dominate raw error counts while a low-traffic label sits at a near-100% error rate — surface the broken-but-quiet endpoint too.
 - **One error across many endpoints = shared dependency:** the same error type spread across unrelated labels usually points at a shared layer (DB, auth, downstream service) or at the load generator — not at each endpoint individually.
-- **Failure-criteria labels:** use `meta.general_labels`, `meta.rule_field_labels`, `meta.kpi_labels`, `meta.condition_labels` when presenting criteria — never raw kpi ids or op codes.
+- **Failure criteria aren't on the execution:** `blazemeter_execution read` returns only the overall `execution_status` — not the per-criterion thresholds or their readable meta labels. Those (`meta.general_labels`, `meta.rule_field_labels`, `meta.kpi_labels`, `meta.condition_labels`) live on the **test object**, reachable only with a `test_id`, which the execution API doesn't expose. Explain the verdict from the run's KPIs; ask for a `test_id` if the user wants the exact criteria.
 - **MCP-first:** every step here is a `blazemeter_execution` MCP action; no REST v4 fallback is needed for single-execution triage. If a future report field is missing from the MCP, that — and only that — would justify a documented REST v4 call.
 - **Parallel fetches:** `read_errors`, `read_request_stats`, `read_anomalies_stats`, and `read_summary` are independent for one execution — call them in parallel.
