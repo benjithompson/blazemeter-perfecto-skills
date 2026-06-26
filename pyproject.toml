@@ -6,3 +6,10 @@ testpaths = ["tests"]
 # Fixtures under tests/fixtures are deliberately malformed SKILL.md files used as
 # test data, not test modules — keep pytest from trying to collect them.
 norecursedirs = ["tests/fixtures"]
+# Live integration tests hit real BlazeMeter; they are gated behind this marker and
+# DESELECTED by default so plain `pytest` (and CI) run only the hermetic mock tests.
+# Opt in locally with `pytest -m live` (the later -m on the command line wins).
+markers = [
+    "live: integration test that hits the real BlazeMeter API; needs credentials + target ids (skips otherwise).",
+]
+addopts = "-m 'not live'"

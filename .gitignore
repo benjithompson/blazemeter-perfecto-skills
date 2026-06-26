@@ -12,6 +12,8 @@
 # BlazeMeter API key files (BLAZEMETER_API_KEY may point at one) — never commit
 api-key*.json
 api-keys*.json
+# Local live-test config (credentials path + target ids). The .example is committed.
+tests/live.env
 
 # Dependencies / build (adjust once implementation stack is chosen)
 node_modules/
