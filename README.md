@@ -52,12 +52,14 @@ the Claude Code prompt), and the skills then appear in both surfaces:
 Skills reuse the **same environment variables the BlazeMeter MCP uses** — configure them once for
 the MCP and you're done. Precedence:
 
-1. `API_KEY_ID` + `API_KEY_SECRET` — your BlazeMeter API key id and secret (preferred); else
-2. `BLAZEMETER_API_KEY` — a path to a BlazeMeter API key file.
+1. `API_KEY_ID` + `API_KEY_SECRET` — your BlazeMeter API key id and secret (preferred, used only
+   when **both** are set); else
+2. `BLAZEMETER_API_KEY` — a path to a BlazeMeter API key file: JSON of the shape
+   `{ "id": "...", "secret": "..." }`.
 
-Keys are **never committed** to a repo and **never embedded** in generated reports. A test's asset
-`auth.json` (which authenticates the system under test) is a separate thing from these platform
-credentials.
+Keys are **never committed** to a repo (key files like `api-key*.json` are gitignored) and **never
+embedded** in generated reports. A test's asset `auth.json` (which authenticates the system under
+test) is a separate thing from these platform credentials.
 
 ## Use it
 
