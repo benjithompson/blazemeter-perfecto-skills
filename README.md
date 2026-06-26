@@ -20,6 +20,7 @@ issues.
 | `run-blazemeter-test` | Runs a test end-to-end — optionally sets a simple load profile (with confirmation), starts the execution, polls to completion, and reports a pass/fail summary against the test's failure criteria. |
 | `compare-blazemeter-runs` | Compares two executions (baseline vs candidate) — diffs response-time percentiles, throughput, and error rate with magnitude and direction, flags regressions past a threshold, and emits a ship / no-ship verdict. |
 | `triage-blazemeter-failure` | Deep-dives one failed or regressed run — breaks errors down by type and endpoint, ranks endpoint hot spots, summarizes anomalies, separates systemic problems from noise, and ends with prioritized next steps. |
+| `blazemeter-report` | Generates a branded, self-contained HTML cross-run trend & regression Report over a time window — trend charts, regression flags, and SLA compliance across many runs, rendered offline via the report engine. |
 
 Each is invoked (namespaced) as **`blazemeter-perfecto:<skill-name>`**, e.g. `blazemeter-perfecto:run-blazemeter-test`.
 
