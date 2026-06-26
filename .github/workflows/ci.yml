@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Thin CI (per PRD #1): frontmatter lint + script --help smoke + tests.
+
+      - name: Lint SKILL.md frontmatter
+        # Standard-library only; no install needed. Fails on any malformed frontmatter.
+        run: python shared/scripts/lint_frontmatter.py skills
+
+      - name: Linter must reject malformed frontmatter
+        # Proves the "fails on a malformed one" guarantee at the lint level, not just in pytest.
+        run: |
+          if python shared/scripts/lint_frontmatter.py tests/fixtures/malformed-stray-backtick/SKILL.md; then
+            echo "::error::linter accepted a malformed SKILL.md — it should have failed" >&2
+            exit 1
+          fi
+          echo "linter correctly rejected the malformed fixture"
+
+      - name: Smoke-test shared scripts (--help)
+        # Every shared script must expose a working --help.
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for script in shared/scripts/*.py; do
+            echo "::group::$script --help"
+            python "$script" --help
+            echo "::endgroup::"
+          done
+
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip -r requirements-dev.txt
+
+      - name: Run tests
+        run: pytest -q

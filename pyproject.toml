@@ -1,0 +1,8 @@
+[tool.pytest.ini_options]
+# The linter lives in shared/scripts so skills can reference it via
+# ${CLAUDE_PLUGIN_ROOT}; put it on the import path for the tests.
+pythonpath = ["shared/scripts"]
+testpaths = ["tests"]
+# Fixtures under tests/fixtures are deliberately malformed SKILL.md files used as
+# test data, not test modules — keep pytest from trying to collect them.
+norecursedirs = ["tests/fixtures"]
