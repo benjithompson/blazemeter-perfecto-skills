@@ -25,3 +25,6 @@ __pycache__/
 
 # Python test tooling
 .pytest_cache/
+
+# Generated reports (default output dir of the report engine)
+blazemeter-reports/

@@ -1,0 +1,54 @@
+{
+  "meta": {
+    "title": "Checkout API – Peak: Cross-Run Trend & Regression",
+    "subtitle": "5 runs over the release window",
+    "generated_at": "2026-06-26T18:00:00Z",
+    "window_start": "2026-06-20",
+    "window_end": "2026-06-26",
+    "context": {
+      "account": { "name": "Acme Performance", "id": "1001" },
+      "workspace": { "name": "Release Gating", "id": "2002" },
+      "project": { "name": "Checkout", "id": "3003" },
+      "test": { "name": "Checkout API – Peak", "id": "4004" }
+    }
+  },
+  "summary": {
+    "verdict": "NO-SHIP",
+    "headline": "p95 latency regressed 28% on the latest run and error rate breached the 1% SLA.",
+    "narrative": [
+      "Response-time percentiles were stable for the first four runs, then p95 jumped from 612 ms to 784 ms on 2026-06-26.",
+      "Error rate crossed the 1% failure criterion on the final run (1.9%), driven by the /checkout/submit endpoint.",
+      "Recommend blocking the release and triaging the latest run before re-testing."
+    ]
+  },
+  "runs": [
+    { "execution_id": "9001", "timestamp": "2026-06-20T09:00:00Z", "label": "06-20", "status": "pass",
+      "kpis": { "avg_rt_ms": 240, "p90_ms": 420, "p95_ms": 605, "p99_ms": 910, "rps": 48.2, "error_rate_pct": 0.2, "concurrency": 200 } },
+    { "execution_id": "9002", "timestamp": "2026-06-22T09:00:00Z", "label": "06-22", "status": "pass",
+      "kpis": { "avg_rt_ms": 245, "p90_ms": 430, "p95_ms": 612, "p99_ms": 905, "rps": 47.9, "error_rate_pct": 0.3, "concurrency": 200 } },
+    { "execution_id": "9003", "timestamp": "2026-06-24T09:00:00Z", "label": "06-24", "status": "pass",
+      "kpis": { "avg_rt_ms": 251, "p90_ms": 433, "p95_ms": 620, "p99_ms": 940, "rps": 47.1, "error_rate_pct": 0.4, "concurrency": 200 } },
+    { "execution_id": "9004", "timestamp": "2026-06-25T09:00:00Z", "label": "06-25", "status": "pass",
+      "kpis": { "avg_rt_ms": 258, "p90_ms": 451, "p95_ms": 631, "p99_ms": 968, "rps": 46.5, "error_rate_pct": 0.6, "concurrency": 200 } },
+    { "execution_id": "9005", "timestamp": "2026-06-26T09:00:00Z", "label": "06-26", "status": "fail",
+      "kpis": { "avg_rt_ms": 312, "p90_ms": 560, "p95_ms": 784, "p99_ms": 1320, "rps": 41.0, "error_rate_pct": 1.9, "concurrency": 200 } }
+  ],
+  "regressions": [
+    { "kpi": "p95 response time", "from_value": 631, "to_value": 784, "pct_change": 24.2, "direction": "up", "severity": "critical", "run_id": "9005", "note": "vs previous run" },
+    { "kpi": "error rate %", "from_value": 0.6, "to_value": 1.9, "pct_change": 216.7, "direction": "up", "severity": "critical", "run_id": "9005", "note": "breached 1% SLA" },
+    { "kpi": "throughput (RPS)", "from_value": 46.5, "to_value": 41.0, "pct_change": -11.8, "direction": "down", "severity": "warning", "run_id": "9005" }
+  ],
+  "sla": {
+    "pass_count": 4,
+    "fail_count": 1,
+    "rules": [
+      { "label": "Error rate", "threshold": "> 1%", "pass_rate_pct": 80.0, "note": "failed on 06-26" },
+      { "label": "p95 response time", "threshold": "> 750 ms", "pass_rate_pct": 80.0, "note": "failed on 06-26" }
+    ]
+  },
+  "endpoints": [
+    { "name": "/checkout/submit", "p95_ms": 1180, "error_rate_pct": 4.1, "trend": "degrading" },
+    { "name": "/cart/add", "p95_ms": 540, "error_rate_pct": 0.1, "trend": "stable" },
+    { "name": "/catalog/search", "p95_ms": 410, "error_rate_pct": 0.0, "trend": "stable" }
+  ]
+}
