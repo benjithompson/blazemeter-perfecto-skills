@@ -7,11 +7,18 @@ Analyze the full execution history of a BlazeMeter test and produce a QA perform
 
 ## Step 0 — Resolve and confirm context (account → workspace → project → test)
 
-This is the canonical Context Resolution step from `shared/conventions.md`. Always resolve and **display** the full context before doing any analysis, so the user can confirm you're operating on the right thing.
+This is the canonical Context Resolution step from `shared/conventions.md` §4. Always resolve and **display** the full context (with ids) before doing any analysis, so the user can confirm you're operating on the right thing. **Don't assume:** the user may belong to multiple accounts, each with multiple workspaces/projects/tests, and the `blazemeter_user read` default is a suggestion to confirm, never a silent choice.
 
-If the user provided a `test_id`, use it directly. If they gave a test name, use `blazemeter_tests list` (with the relevant `project_id`) to find it. If no context is available, call `blazemeter_user read` first to get the default account/workspace/project, then `blazemeter_tests list` to let the user pick.
+### Step 0a — Identify the target test (two entry paths)
 
-### Step 0a — Validate account/workspace/project context
+- **A `test_id` was given** → trust it and resolve *upward* (the chain in Step 0b). The displayed context block stands as confirmation; no menu needed.
+- **Nothing, or only a test *name*** → resolve *top-down* first. Establish the account, then workspace, then project, applying the uniform tiered pick rule at each level:
+  - Start from the `blazemeter_user read` default, presented as a confirmable/overridable suggestion; if a level has exactly one option, just display it.
+  - To enumerate, list one page (`limit: 50`). **Small set** (page not full) → numbered list, each entry with its id, user picks. **Too big to list** (page comes back full) → don't dump it; ask the user to name or paste the workspace/project/test (a pasted **id** short-circuits via direct `read`; a **name** you resolve by paging and matching).
+  - Only after the project is confirmed, resolve a bare test **name** with `blazemeter_tests list` *within that project_id*.
+  - **Name doesn't resolve cleanly:** no match → say so and stop; multiple matches → list each candidate with its parent and id and let the user pick; 403 → report the access gap, don't retry. Never fall back to the default.
+
+### Step 0b — Resolve the full hierarchy upward and confirm
 
 Regardless of how the test was identified, always resolve and display its full organizational context before proceeding. Chain these calls — each response provides the ID needed for the next:
 
@@ -26,19 +33,21 @@ Regardless of how the test was identified, always resolve and display its full o
    → captures: workspace name, account_id
 
 4. blazemeter_account read       { account_id: <account_id from step 3> }
-   → captures: account name
+   → captures: account name, AI-consent state
 ```
+
+**AI Consent gate:** if the account has **not** enabled AI consent (from step 4), stop with a clear message — e.g. `Account <name> (<id>) has not enabled AI consent` — rather than proceeding into analysis.
 
 Present the resolved context to the user before continuing:
 
 ```
 Test:       <test name>  (ID: <test_id>)
-Project:    <project name>
-Workspace:  <workspace name>
-Account:    <account name>
+Project:    <project name>  (ID: <project_id>)
+Workspace:  <workspace name>  (ID: <workspace_id>)
+Account:    <account name>  (ID: <account_id>)
 ```
 
-If any link in the chain fails (e.g. a project_id is missing from the test response), **stop and report the gap** — do not proceed with analysis against an unverified context.
+If any link in the chain fails (e.g. a project_id is missing from the test response), **stop and report the gap** — do not proceed with analysis against an unverified context. Once confirmed, carry this account/workspace forward for later skills in the same conversation (display it, allow a one-step "switch"); this is conversational memory, not stored state.
 
 ## Step 1 — Collect all executions
 

@@ -71,27 +71,79 @@ account → workspace → project → test — before it acts, and stop rather t
 This is the single most important safety rule: it stops a skill from analyzing, comparing, or
 running against the wrong thing.
 
-Embed this as **Step 0** of the skill (skills are self-contained prose — copy and adapt it):
+The guiding principle is **don't assume**: a user can belong to **multiple accounts**, each with
+**multiple workspaces, projects, and tests**, and names collide across them. The default from
+`blazemeter_user read` is a **suggestion to confirm, never a decision made for the user**. No skill
+silently picks a level when more than one is possible.
 
-1. Determine the target from what the user gave you:
-   - a `test_id` → use it directly;
-   - a test **name** → `blazemeter_tests list` within the relevant `project_id` to resolve it;
-   - **nothing** → `blazemeter_user read` for the default account/workspace/project, then list
-     tests and let the user pick.
-2. Chain reads to resolve the full hierarchy (each response yields the id for the next):
-   `blazemeter_tests read` → `blazemeter_project read` → `blazemeter_workspaces read` →
-   `blazemeter_account read`.
-3. **Display** the resolved context and let it stand as confirmation before continuing:
+Embed this as **Step 0** of the skill (skills are self-contained prose — copy and adapt it).
 
-   ```
-   Test:       <test name>  (ID: <test_id>)
-   Project:    <project name>
-   Workspace:  <workspace name>
-   Account:    <account name>
-   ```
+### 4.1 Two entry paths
 
-4. If **any** link fails (a missing `project_id`, an unresolved name), **stop and report the
-   gap** — never proceed against an unverified context.
+- **A `test_id` was given** → trust it and resolve *upward*: `blazemeter_tests read` →
+  `blazemeter_project read` → `blazemeter_workspaces read` → `blazemeter_account read` (each
+  response yields the id for the next). The displayed context block (§4.4) stands as confirmation;
+  no menu needed.
+- **Nothing was given, or only a test *name*** → resolve *top-down*: establish the account, then the
+  workspace, then the project (§4.2), **then** look up a bare test name only inside that confirmed
+  project. A name is meaningless without a scope — never search a name across everything.
+
+### 4.2 Picking a level — one uniform tiered rule
+
+Apply the same rule at **every** level you must resolve (workspace, project, test):
+
+1. Start from the default. `blazemeter_user read` gives **one** default account/workspace/project.
+   Present it as a **pre-filled choice to confirm or override** — only prompt when there is genuine
+   ambiguity. If a level has exactly one option, proceed and just **display** it.
+2. To enumerate options, list the level (`blazemeter_account list`, `blazemeter_workspaces list`,
+   `blazemeter_project list`, `blazemeter_tests list`) one page at a time (`limit: 50`).
+   - **Small set** (the first page is *not* full) → show a **numbered list, every entry with its
+     id** — e.g. `1. Acme (account 12345)` — and let the user pick.
+   - **Too big to list** (the first page comes back full, so more pages exist — common for users
+     with very many workspaces) → **do not dump the list**. Ask the user to **name or paste** the
+     workspace/project/test. A pasted **id short-circuits** any level (direct `read`); a **name**
+     you resolve by paging and matching.
+3. Always show the **id** next to each name so same-named entities are distinguishable and the id is
+   locked for the next call.
+
+### 4.3 Failure handling — strict, never assume
+
+When a user-supplied name does not resolve cleanly, **stop — never fall back to the default**:
+
+- **No match** → say so, show what *is* available (or ask for the id), and stop.
+- **Multiple matches** → this is itself a disambiguation menu: list every candidate with its
+  **parent and id** (e.g. `Staging — account Acme (ws 123)` / `Staging — account Globex (ws 456)`),
+  and let the user pick.
+- **No access** (a `read` returns 403) → report the access gap plainly; do not retry.
+- **Broken upward link** (e.g. a `test_id` whose response is missing `project_id`) → stop and
+  report the gap.
+
+### 4.4 AI Consent gate
+
+AI access is gated **per account** (the consent flag lives on the account object). After resolving
+the account, check its AI-consent state via `blazemeter_account read`. If the account has **not**
+consented, **stop with a clear message** — e.g. `Account Acme (12345) has not enabled AI consent` —
+rather than letting a downstream tool fail cryptically.
+
+### 4.5 Display and confirm
+
+**Display** the resolved context and let it stand as confirmation before continuing — including when
+a level was resolved by name rather than picked from a list:
+
+```
+Test:       <test name>  (ID: <test_id>)
+Project:    <project name>  (ID: <project_id>)
+Workspace:  <workspace name>  (ID: <workspace_id>)
+Account:    <account name>  (ID: <account_id>)
+```
+
+### 4.6 Carry context forward (within a conversation)
+
+Resolve the scope **once**, then **carry the confirmed account/workspace forward** across later
+skills in the same conversation — **display it each time** with a one-step override (e.g. "say
+*switch* to change"). Re-prompting identical context on every invocation breeds banner blindness,
+which is itself a safety risk. This is **conversational memory, not stored state**: never write the
+chosen context to disk or cache it across sessions.
 
 Respect the hierarchy **Account → Workspace → Project → Test → Execution**; validate each level
 before operating on the next.
@@ -138,7 +190,11 @@ Before a skill merges:
 
 - [ ] Frontmatter passes `lint_frontmatter.py` (CI enforces this).
 - [ ] Folder name == `name` == namespaced invocation works.
-- [ ] Step 0 Context Resolution is present and **displays** the resolved hierarchy.
+- [ ] Step 0 Context Resolution is present and **displays** the resolved hierarchy (with ids).
+- [ ] Step 0 never assumes a single default: it confirms/overrides the default, applies the tiered
+      pick rule (list small sets, ask-by-name when too big to list), disambiguates name collisions
+      across accounts, checks the per-account **AI Consent** gate, and carries context forward within
+      the conversation without persisting it.
 - [ ] No personal absolute paths, no credentials, no machine-specific config anywhere.
 - [ ] Any shared script is in `shared/scripts/` and referenced via `${CLAUDE_PLUGIN_ROOT}`.
 - [ ] Uses MCP-first; any REST usage is justified in the prose.
