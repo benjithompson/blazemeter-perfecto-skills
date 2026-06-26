@@ -17,3 +17,6 @@ build/
 __pycache__/
 *.pyc
 .venv/
+
+# Python test tooling
+.pytest_cache/

@@ -13,6 +13,23 @@ and use to drive these platforms from Claude Code.
 > Domain language and architectural decisions are captured lazily in `CONTEXT.md` and
 > `docs/adr/` as they get resolved (via the engineering skills). Don't pre-populate them.
 
+## Repository is a Claude Code plugin
+
+This repo is itself an installable plugin (`.claude-plugin/plugin.json`) published via a
+self-hosted marketplace (`.claude-plugin/marketplace.json`). Layout:
+
+- `skills/<name>/SKILL.md` — the skills (auto-discovered; invoked as `blazemeter-perfecto:<name>`).
+- `shared/conventions.md` — **the skill-authoring house style and Definition of Done. Read it
+  before adding or changing a skill.** It defines the required Context Resolution step, frontmatter
+  rules, credential handling, and MCP-first integration.
+- `shared/scripts/` — deterministic shared scripts (e.g. the frontmatter linter), referenced from
+  skills via `${CLAUDE_PLUGIN_ROOT}`.
+- `tests/` — fixture-driven tests for the deterministic layer; run with `pytest`.
+- `commands/` — optional thin command entry points to skills.
+
+CI (`.github/workflows/ci.yml`) lints every `SKILL.md` frontmatter, smoke-tests shared scripts'
+`--help`, and runs the tests.
+
 ## Agent skills
 
 ### Issue tracker

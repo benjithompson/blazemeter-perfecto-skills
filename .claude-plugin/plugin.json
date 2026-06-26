@@ -1,0 +1,19 @@
+{
+  "name": "blazemeter-perfecto",
+  "description": "Expert-workflow skills that turn the BlazeMeter MCP into performance-engineering judgment: analyze a test's history for trends, regressions, and SLA compliance — with more of the BlazeMeter performance lifecycle to come.",
+  "version": "0.1.0",
+  "author": {
+    "name": "blazemeter-perfecto-skills contributors"
+  },
+  "homepage": "https://github.com/benjithompson/blazemeter-perfecto-skills",
+  "repository": "https://github.com/benjithompson/blazemeter-perfecto-skills",
+  "license": "Apache-2.0",
+  "keywords": [
+    "blazemeter",
+    "perfecto",
+    "performance-testing",
+    "load-testing",
+    "mcp",
+    "qa"
+  ]
+}

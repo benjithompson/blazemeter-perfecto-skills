@@ -1,0 +1,16 @@
+{
+  "name": "blazemeter-perfecto-skills",
+  "owner": {
+    "name": "blazemeter-perfecto-skills contributors",
+    "url": "https://github.com/benjithompson/blazemeter-perfecto-skills"
+  },
+  "plugins": [
+    {
+      "name": "blazemeter-perfecto",
+      "source": ".",
+      "description": "BlazeMeter performance expert-workflow skills (v1: analyze-blazemeter-test). Reuses your BlazeMeter MCP credentials.",
+      "version": "0.1.0",
+      "license": "Apache-2.0"
+    }
+  ]
+}
