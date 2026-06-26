@@ -27,18 +27,17 @@ Do this **for each of the two executions**. Chain these calls — each response 
 
 ```
 1. blazemeter_execution read   { execution_id: <id> }
-   → captures: execution status, ended (completion), start/end, test_id, concurrency/load config
+   → captures: execution_status, ended (completion), created/updated, project_id, execution_name
+   (Use execution_name as the run's display name. The execution API does NOT expose test_id,
+    load config, or failure-criteria detail — so there is no blazemeter_tests read on this path.)
 
-2. blazemeter_tests read       { test_id: <test_id from step 1> }
-   → captures: test name, project_id
-
-3. blazemeter_project read     { project_id: <project_id from step 2> }
+2. blazemeter_project read     { project_id: <project_id from step 1> }
    → captures: project name, workspace_id
 
-4. blazemeter_workspaces read  { workspace_id: <workspace_id from step 3> }
+3. blazemeter_workspaces read  { workspace_id: <workspace_id from step 2> }
    → captures: workspace name, account_id
 
-5. blazemeter_account read     { account_id: <account_id from step 4> }
+4. blazemeter_account read     { account_id: <account_id from step 3> }
    → captures: account name, AI-consent state
 ```
 
@@ -52,19 +51,19 @@ Present **both** resolved contexts to the user before continuing:
 
 ```
 Baseline execution:  <execution_id>
-  Test:       <test name>  (ID: <test_id>)
+  Test:       <execution_name>  (test id not exposed by the execution API)
   Project:    <project name>  (ID: <project_id>)
   Workspace:  <workspace name>  (ID: <workspace_id>)
   Account:    <account name>  (ID: <account_id>)
 
 Candidate execution: <execution_id>
-  Test:       <test name>  (ID: <test_id>)
+  Test:       <execution_name>  (test id not exposed by the execution API)
   Project:    <project name>  (ID: <project_id>)
   Workspace:  <workspace name>  (ID: <workspace_id>)
   Account:    <account name>  (ID: <account_id>)
 ```
 
-If any link in either chain fails (e.g. an `execution_id` whose response is missing `test_id`, or a `read` returns 403), **stop and report the gap** — do not diff against an unverified context. Once confirmed, carry the account/workspace forward for later skills in the same conversation (display it, allow a one-step "switch"); this is conversational memory, not stored state.
+If any link in either chain fails (e.g. a `read` returns 403, or `blazemeter_execution read` is missing `project_id`, or a parent `read` is missing `workspace_id` / `account_id`), **stop and report the gap** — do not diff against an unverified context. (Do **not** stop because `test_id` is missing — the execution API never returns it on this path, so that is expected, not a failure.) Once confirmed, carry the account/workspace forward for later skills in the same conversation (display it, allow a one-step "switch"); this is conversational memory, not stored state.
 
 ## Step 1 — Pull the reports for each execution
 
@@ -80,17 +79,17 @@ blazemeter_execution read_all_reports  { execution_id: <candidate_id> }
 - **errors** — error breakdown by type, count, and percentage
 - **request_stats** — per-endpoint (label) breakdown of the same KPIs
 
-You already have each execution's `status`, `ended`, and load config from the Step 0b `blazemeter_execution read`. If a verdict needs failure-criteria detail, re-read it — present failure criteria using `meta.general_labels`, `meta.rule_field_labels`, `meta.kpi_labels`, and `meta.condition_labels`, never raw kpi ids or op codes.
+You already have each execution's `execution_status` and `ended` from the Step 0b `blazemeter_execution read`. Note the execution API does **not** return the configured load (concurrency/hold-for/ramp-up/iterations) or failure-criteria detail — those live on the **test object**, which this execution-entry path never resolves (no `test_id` is exposed). The only load signal available here is the **achieved peak concurrency**, `max_concurrent_users`, from the summary report (Step 1). Failure-criteria meta labels (`meta.general_labels`, `meta.rule_field_labels`, `meta.kpi_labels`, `meta.condition_labels`) would require a `blazemeter_tests read` with a `test_id` you don't have; if a verdict truly needs them, say so and ask the user for the test id rather than inventing one.
 
 ## Step 2 — Establish whether it's apples-to-apples (load normalization)
 
-Before diffing, compare the two load configurations (concurrency / hold-for / ramp-up / iterations) from each execution's `blazemeter_execution read`:
+Before diffing, compare the **achieved peak concurrency** of the two runs — `read_summary.max_concurrent_users` from the summary report you already pulled in Step 1 (one per execution). This is the only load signal available on the execution-entry path: the *configured* load (hold-for / ramp-up / iterations) lives on the test object and is **not** reachable from executions alone, so don't claim to compare it — only achieved peak concurrency is comparable here. (Comparing the configured shape would require a `blazemeter_tests read` per run, which needs a `test_id` this path doesn't expose.)
 
-- **Configs match** → a direct KPI diff is valid. Proceed to Step 3 on raw numbers.
-- **Configs differ** → raw KPIs are not directly comparable (more virtual users naturally lowers per-user throughput and inflates latency). **Normalize where you can** and **warn clearly**:
-  - **Throughput**: compare **RPS per virtual user** = `RPS / concurrency` for each run, alongside raw RPS. This removes the load-level difference from the throughput signal.
+- **Achieved concurrency matches** → a direct KPI diff is valid. Proceed to Step 3 on raw numbers.
+- **Achieved concurrency differs** → raw KPIs are not directly comparable (more virtual users naturally lowers per-user throughput and inflates latency). **Normalize where you can** and **warn clearly**:
+  - **Throughput**: compare **RPS per virtual user** = `average_throughput_per_second / max_concurrent_users` for each run, alongside raw RPS. This removes the load-level difference from the throughput signal.
   - **Response time / error rate**: these do **not** normalize cleanly across different concurrency — higher load legitimately changes them. Report the raw diff but mark it **not apples-to-apples** and lower your confidence in any verdict that hinges on it.
-  - If concurrency differs by more than a small margin (say > 10%), put a prominent **CONFIG MISMATCH** warning at the top of the output; do not let a regression flag masquerade as a code regression when it's really a load-level difference.
+  - If achieved peak concurrency differs by more than a small margin (say > 10%), put a prominent **CONFIG MISMATCH** warning at the top of the output; do not let a regression flag masquerade as a code regression when it's really a load-level difference. (You can only attribute the gap to *achieved* load, not to a configured-load change, since the configured shape isn't visible here.)
 
 ## Step 3 — Diff the key KPIs (magnitude and direction)
 
@@ -135,12 +134,13 @@ Structure the output as:
 
 ```
 ## BlazeMeter Run Comparison
-**Baseline:**  exec <baseline_id> — <test name> (<date>)
-**Candidate:** exec <candidate_id> — <test name> (<date>)
+**Baseline:**  exec <baseline_id> — <execution_name> (<date>)
+**Candidate:** exec <candidate_id> — <execution_name> (<date>)
 **Threshold:** regression flagged at ≥ <N>%
 
 [CONFIG MISMATCH WARNING — only if Step 2 found one]
-Baseline load: <concurrency> VU, hold <…>, ramp <…>  |  Candidate load: <concurrency> VU, hold <…>, ramp <…>
+Baseline achieved peak: <max_concurrent_users> VU  |  Candidate achieved peak: <max_concurrent_users> VU
+(Configured hold-for/ramp-up/iterations are not visible on the execution-entry path, so only achieved peak concurrency is compared.)
 → <which KPIs are / are not apples-to-apples, and what was normalized>
 
 ### Verdict: SHIP / NO-SHIP / SHIP WITH CAVEATS
@@ -171,11 +171,11 @@ Baseline load: <concurrency> VU, hold <…>, ramp <…>  |  Candidate load: <con
 ## Gotchas
 
 - **Direction matters as much as magnitude.** Lower is better for latency and error rate; higher is better for throughput. A naive `|delta_pct| ≥ threshold` flag will mislabel improvements as regressions — always pair magnitude with the worse-direction check from Step 3.
-- **Apples-to-oranges load configs.** Different concurrency/duration makes a raw KPI diff meaningless. Normalize throughput as **RPS per virtual user** (`RPS / concurrency`) and warn loudly; latency and error rate don't normalize across load levels, so lower verdict confidence rather than pretending they're comparable.
+- **Apples-to-oranges load levels.** Different achieved concurrency makes a raw KPI diff meaningless. Normalize throughput as **RPS per virtual user** (`average_throughput_per_second / max_concurrent_users`) and warn loudly; latency and error rate don't normalize across load levels, so lower verdict confidence rather than pretending they're comparable. Note only *achieved* peak concurrency (`max_concurrent_users`, from the summary) is available on the execution-entry path — the configured load (hold-for/ramp-up/iterations) lives on the test object and isn't reachable from executions alone, so don't claim to compare it.
 - **Completion before comparison.** Use `ended != null` (not status text) to confirm each run finished. A still-running execution returns partial KPIs that look like a regression.
 - **Indeterminate failure status.** `execution_status` can be `unset` (no criteria defined ⇒ no pass/fail signal), `abort`, `error`, or `noData` — none of these are a clean "pass." Don't read `unset` as "passed"; surface it as indeterminate in the verdict.
 - **Baseline of zero.** Guard `delta_pct` when a baseline KPI is 0 (e.g. error rate). Report the absolute change and label it "n/a%" rather than dividing by zero or printing infinity.
 - **Tiny absolute values, huge percentages.** Error rate going 0.02% → 0.06% is +200% relatively but operationally trivial. Show absolute values alongside percentages and don't let a large Δ% on a negligible base dominate the verdict; conversely, flag any absolute crossing of 1% / 5% even if the relative move is small.
-- **Failure-criteria labels.** When citing failure criteria in the verdict, use `meta.general_labels`, `meta.rule_field_labels`, `meta.kpi_labels`, and `meta.condition_labels` — never raw kpi ids or op codes.
+- **Failure-criteria pass/fail vs. detail.** The pass/fail signal is the execution's own `execution_status` (`pass`/`fail`) — that's all you need for the "candidate failed while baseline passed" verdict, and it's available on this path. The criteria *definitions* and their readable labels (`meta.general_labels`, `meta.rule_field_labels`, `meta.kpi_labels`, `meta.condition_labels`) live on the **test object** and are **not** reachable from an execution (no `test_id` is exposed). If you must spell out *which* rule fired, ask the user for the test id and `blazemeter_tests read` it — never raw kpi ids or op codes, and never invent the criteria.
 - **Cross-account consent.** Each execution's account is consent-gated independently; both must have AI consent enabled, or Step 0 stops.
 - **Pagination.** When picking executions from a test, `blazemeter_execution list` maxes at 50 per call — page by `offset` if the run you want is older than the first page.
