@@ -10,8 +10,11 @@ Code surfaces — the CLI, the VS Code extension, and the desktop app — reusin
 already set for the MCP.
 
 The plugin goes depth-first on the BlazeMeter **Performance** pillar — covering the lifecycle from
-run → analyze → compare → triage → report. Later pillars (Perfecto, Virtual Services, API
-Monitoring) are planned — see the [PRD](../../issues/1) and open issues.
+run → analyze → compare → triage → report, then lifting it to **portfolio altitude** (a cross-test
+"analysis of the day" and a branded portfolio scorecard) and into the **delivery pipeline** (GitHub
+Actions CI scaffolding and a PR performance gate). Later pillars (Perfecto, Virtual Services, API
+Monitoring) are planned — see the v1 [PRD](../../issues/1), the v2 [PRD](../../issues/32), and open
+issues.
 
 ## What's included
 
@@ -22,6 +25,11 @@ Monitoring) are planned — see the [PRD](../../issues/1) and open issues.
 | `compare-blazemeter-runs` | Compares two executions (baseline vs candidate) — diffs response-time percentiles, throughput, and error rate with magnitude and direction, flags regressions past a threshold, and emits a ship / no-ship verdict. |
 | `triage-blazemeter-failure` | Deep-dives one failed or regressed run — breaks errors down by type and endpoint, ranks endpoint hot spots, summarizes anomalies, separates systemic problems from noise, and ends with prioritized next steps. |
 | `blazemeter-report` | Generates a branded, self-contained HTML cross-run trend & regression Report over a time window — trend charts, regression flags, and SLA compliance across many runs, rendered offline from a shipped HTML template the skill fills in (no local interpreter needed). |
+| `blazemeter-baseline` | Establishes, updates, and resolves the **golden baseline** run for a test — pin a specific execution, or fall back to the last passing run; reads/writes a committed `.blazemeter/baseline.json` for reproducible CI gating. The reference point `compare` and the PR gate build on. |
+| `blazemeter-daily-digest` | The **"analysis of the day"** — sweeps every execution across a workspace/project in a window and emits one cross-test scorecard: what ran, pass/fail, which tests newly regressed vs. their own baseline, incidents ranked by severity, and a prioritized "what needs your eyes today." |
+| `blazemeter-portfolio-report` | A branded, self-contained HTML scorecard across **many tests** over a window — per-test health, SLA-compliance %, trend arrows, and regression flags — the portfolio/stakeholder view, rendered offline from the same shared report engine. |
+| `blazemeter-ci-setup` | Scaffolds a **GitHub Actions** workflow that runs a BlazeMeter test on PRs / pushes / a schedule and gates on pass/fail or compare-vs-baseline — emitting the workflow YAML and the repo-secret wiring (credentials via `${{ secrets.BLAZEMETER_API_KEY }}`, never embedded). |
+| `blazemeter-pr-gate` | A Journey that gates a pull request on performance — runs the test, compares the candidate against the resolved baseline, and posts a ship / no-ship verdict back as a **PR comment and commit status**. |
 
 Each skill is **also a slash command**: once the plugin is installed, every skill appears in the
 `/` menu (namespaced) as **`/blaze:<skill-name>`**, e.g.
