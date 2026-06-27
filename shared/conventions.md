@@ -201,3 +201,7 @@ Before a skill merges:
 - [ ] Has an output template and a Gotchas section.
 - [ ] Deterministic shared logic (renderers, credential resolution) has fixture tests; ran once
       manually against a real BlazeMeter test.
+- [ ] **Bumped the plugin `version`** (same value in `.claude-plugin/plugin.json` and
+      `.claude-plugin/marketplace.json`) so installs actually pick up the change — installs are
+      version-pinned and won't update otherwise. After merge, reinstall + `/reload-plugins` to take
+      effect (see CLAUDE.md → "Making changes take effect").

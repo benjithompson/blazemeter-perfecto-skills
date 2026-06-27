@@ -4,7 +4,12 @@ Thin command entry points to skills live here. Per the PRD (issue #1), commands 
 thin entry points to skills — there is no wrapper-per-MCP-operation. A command is a small `*.md`
 file that invokes a skill; the expertise stays in the skill under `skills/`.
 
-v1 ships its capability as a skill, invoked namespaced as
-`blazemeter-perfecto:analyze-blazemeter-test` (skills are auto-discovered from `skills/` and the
-model can invoke them directly), so no command wrapper is required yet. Add one here only when a
-short, memorable `/command` entry point genuinely helps.
+Every skill is **already a slash command**: Claude Code surfaces each `skills/<name>/SKILL.md` in
+the `/` menu as `/blazemeter-perfecto:<name>` (on the CLI, VS Code, and the desktop app alike), and
+if a command and a skill share a name the **skill takes precedence**. So a per-skill wrapper here
+would be redundant (and ignored), and the `blazemeter-perfecto:` namespace applies regardless — a
+wrapper can't even shorten the invocation.
+
+Add a command here only when a genuinely *different* entry point helps (e.g. a composite workflow
+that chains several skills), not as a 1:1 alias for an existing skill. The expertise stays in the
+skill under `skills/`.

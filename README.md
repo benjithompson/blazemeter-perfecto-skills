@@ -5,14 +5,15 @@
 
 The BlazeMeter MCP can fetch a single execution's numbers. It won't tell you whether a build
 regressed, why a run failed, which endpoint is the culprit, or how a service trended over a
-quarter. This plugin encodes that judgment as installable skills that work in **both** the Claude
-Code CLI and the VS Code extension, reusing the credentials you already set for the MCP.
+quarter. This plugin encodes that judgment as installable skills that work across **all** Claude
+Code surfaces — the CLI, the VS Code extension, and the desktop app — reusing the credentials you
+already set for the MCP.
 
-v1 goes depth-first on the BlazeMeter **Performance** pillar. More of the lifecycle (run, compare,
-triage) and a branded cross-run report engine are planned — see the [PRD](../../issues/1) and open
-issues.
+The plugin goes depth-first on the BlazeMeter **Performance** pillar — covering the lifecycle from
+run → analyze → compare → triage → report. Later pillars (Perfecto, Virtual Services, API
+Monitoring) are planned — see the [PRD](../../issues/1) and open issues.
 
-## What's included (v1)
+## What's included
 
 | Skill | What it does |
 | --- | --- |
@@ -22,11 +23,14 @@ issues.
 | `triage-blazemeter-failure` | Deep-dives one failed or regressed run — breaks errors down by type and endpoint, ranks endpoint hot spots, summarizes anomalies, separates systemic problems from noise, and ends with prioritized next steps. |
 | `blazemeter-report` | Generates a branded, self-contained HTML cross-run trend & regression Report over a time window — trend charts, regression flags, and SLA compliance across many runs, rendered offline via the report engine. |
 
-Each is invoked (namespaced) as **`blazemeter-perfecto:<skill-name>`**, e.g. `blazemeter-perfecto:run-blazemeter-test`.
+Each skill is **also a slash command**: once the plugin is installed, every skill appears in the
+`/` menu (namespaced) as **`/blazemeter-perfecto:<skill-name>`**, e.g.
+`/blazemeter-perfecto:run-blazemeter-test`. You don't need separate command wrappers — the skill
+*is* the command, and Claude can also invoke it automatically when it's relevant.
 
 ## Prerequisites
 
-1. **Claude Code** (CLI or the VS Code extension).
+1. **Claude Code** — the CLI, the VS Code extension, or the desktop app (all supported).
 2. **The BlazeMeter MCP server**, installed and connected to Claude Code. It is the source of
    truth for capabilities — see [bzm-mcp](https://github.com/Blazemeter/bzm-mcp).
 3. **BlazeMeter API credentials configured for the MCP** (see below). These skills reuse them — no
@@ -35,8 +39,8 @@ Each is invoked (namespaced) as **`blazemeter-perfecto:<skill-name>`**, e.g. `bl
 ## Install
 
 The plugin lives in a self-hosted marketplace (this repo). Add the marketplace once, then install
-the plugin. The **same two commands work in the CLI and in the VS Code extension** (run them in
-the Claude Code prompt), and the skills then appear in both surfaces:
+the plugin. The **same two commands work in the CLI, the VS Code extension, and the desktop app**
+(run them in the Claude Code prompt), and the skills then appear in every surface:
 
 ```text
 /plugin marketplace add benjithompson/blazemeter-perfecto-skills
@@ -48,8 +52,30 @@ the Claude Code prompt), and the skills then appear in both surfaces:
 - `/plugin install <plugin>@<marketplace>` installs the `blazemeter-perfecto` plugin from the
   `blazemeter-perfecto-skills` marketplace.
 
+After installing (or updating), run `/reload-plugins` (or restart Claude Code) so the new skills
+load. The plugin is **version-pinned** — installs only pick up new skills when the plugin's
+`version` is bumped, so if you previously installed an older version and don't see all five skills,
+reinstall or update.
+
 > Prefer not to use the marketplace? The `skills/` folders are plain, copy-able skills — drop one
 > into your `~/.claude/skills/` (unnamespaced) as a fallback.
+
+### On the Claude Code desktop app
+
+Plugins, marketplaces, namespaced skills/commands, hooks, and MCP servers are all fully supported
+in the desktop app's **local** and **SSH** sessions (they are *not* available in cloud sessions).
+Install exactly as above. Two desktop-specific notes:
+
+- **Configure the BlazeMeter (and Perfecto) MCP server for local sessions.** This plugin reuses the
+  MCP — it does not bundle it — so the MCP server must be connected in the desktop app just like in
+  the CLI (via `~/.claude.json` / `.mcp.json`, which desktop and CLI share, or the **+ →
+  Connectors** flow).
+- **Environment variables: set them in the desktop env editor.** The desktop app inherits only
+  `PATH` (plus a few Claude variables) from your shell profile — it does **not** pick up other
+  `export`ed vars. So set your BlazeMeter credentials (`API_KEY_ID` + `API_KEY_SECRET`, or
+  `BLAZEMETER_API_KEY`) via **Settings → Claude Code → local environment editor** (or the
+  environment dropdown in the prompt box → **Local** → gear icon). The `blazemeter-report` skill
+  also shells out to a `python` interpreter, so ensure one resolves on the local-session `PATH`.
 
 ## Credentials
 
@@ -67,7 +93,8 @@ test) is a separate thing from these platform credentials.
 
 ## Use it
 
-In the CLI or VS Code, ask Claude to analyze a test, or invoke the skill directly:
+In the CLI, VS Code, or the desktop app, ask Claude to analyze a test, or invoke the skill directly
+from the `/` menu:
 
 ```text
 > Analyze my BlazeMeter test "Checkout API – Peak" and tell me if it's regressing.
