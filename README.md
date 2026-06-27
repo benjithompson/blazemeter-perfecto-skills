@@ -24,8 +24,8 @@ Monitoring) are planned — see the [PRD](../../issues/1) and open issues.
 | `blazemeter-report` | Generates a branded, self-contained HTML cross-run trend & regression Report over a time window — trend charts, regression flags, and SLA compliance across many runs, rendered offline from a shipped HTML template the skill fills in (no local interpreter needed). |
 
 Each skill is **also a slash command**: once the plugin is installed, every skill appears in the
-`/` menu (namespaced) as **`/blazemeter-perfecto:<skill-name>`**, e.g.
-`/blazemeter-perfecto:run-blazemeter-test`. You don't need separate command wrappers — the skill
+`/` menu (namespaced) as **`/blaze:<skill-name>`**, e.g.
+`/blaze:run-blazemeter-test`. You don't need separate command wrappers — the skill
 *is* the command, and Claude can also invoke it automatically when it's relevant.
 
 ## Prerequisites
@@ -47,15 +47,15 @@ skills directory so Claude Code discovers it as a plugin:
 
 ```bash
 git clone https://github.com/benjithompson/blazemeter-perfecto-skills.git
-ln -s "$(pwd)/blazemeter-perfecto-skills" ~/.claude/skills/blazemeter-perfecto
+ln -s "$(pwd)/blazemeter-perfecto-skills" ~/.claude/skills/blaze
 ```
 
 Any folder under `~/.claude/skills/` that contains a `.claude-plugin/plugin.json` loads
-automatically on the next session as **`blazemeter-perfecto@skills-dir`** — the skills then appear
+automatically on the next session as **`blaze@skills-dir`** — the skills then appear
 (namespaced) in the `/` menu on the **CLI, the VS Code extension, and the desktop app** (the
 `~/.claude/skills/` location is shared across all three). No `/plugin install` needed.
 
-> Don't want a symlink? Clone directly into `~/.claude/skills/blazemeter-perfecto` instead. Or, for
+> Don't want a symlink? Clone directly into `~/.claude/skills/blaze` instead. Or, for
 > a one-off session, launch the CLI with `claude --plugin-dir /path/to/blazemeter-perfecto-skills`.
 
 ### Updating
@@ -63,15 +63,15 @@ automatically on the next session as **`blazemeter-perfecto@skills-dir`** — th
 Because the plugin is read **in place** from your checkout, updating is just:
 
 ```bash
-git -C ~/.claude/skills/blazemeter-perfecto pull
+git -C ~/.claude/skills/blaze pull
 ```
 
 Then `/reload-plugins` (or start a new session). Edits to a `SKILL.md` take effect immediately;
 changes to other components (`.mcp.json`, `hooks/`, etc.) need the reload. **No version bump or
 reinstall required** — that's the payoff of loading direct from git.
 
-To stop loading it, remove the symlink (`rm ~/.claude/skills/blazemeter-perfecto`) or run
-`claude plugin disable blazemeter-perfecto@skills-dir`.
+To stop loading it, remove the symlink (`rm ~/.claude/skills/blaze`) or run
+`claude plugin disable blaze@skills-dir`.
 
 > **Marketplace distribution is deferred.** Once the plugin is built out further it will be
 > published via a self-hosted marketplace (`.claude-plugin/marketplace.json` is kept ready for

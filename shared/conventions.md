@@ -59,8 +59,8 @@ python shared/scripts/lint_frontmatter.py skills
 
 ## 3. Namespacing
 
-The plugin is named `blazemeter-perfecto`, so skills are invoked namespaced as
-`blazemeter-perfecto:<skill-name>` (e.g. `blazemeter-perfecto:analyze-blazemeter-test`). Name
+The plugin is named `blaze`, so skills are invoked namespaced as
+`blaze:<skill-name>` (e.g. `blaze:analyze-blazemeter-test`). Name
 skills platform-first (`analyze-blazemeter-test`, not `analyze-test`) so later pillars
 (Perfecto, Virtual Services, API Monitoring) never collide.
 

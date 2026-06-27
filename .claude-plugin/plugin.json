@@ -1,5 +1,5 @@
 {
-  "name": "blazemeter-perfecto",
+  "name": "blaze",
   "description": "Expert-workflow skills that turn the BlazeMeter MCP into performance-engineering judgment: run a test end-to-end, analyze its history for trends/regressions/SLA compliance, compare two runs for a ship verdict, triage a failed run, and generate a branded cross-run report — with more BlazeMeter pillars to come.",
   "version": "0.2.1",
   "author": {
