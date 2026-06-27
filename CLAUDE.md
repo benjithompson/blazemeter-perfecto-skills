@@ -15,8 +15,12 @@ and use to drive these platforms from Claude Code.
 
 ## Repository is a Claude Code plugin
 
-This repo is itself an installable plugin (`.claude-plugin/plugin.json`) published via a
-self-hosted marketplace (`.claude-plugin/marketplace.json`). Layout:
+This repo is itself a Claude Code plugin (`.claude-plugin/plugin.json`). **During active
+development it loads directly from a local git checkout** as a skills-directory plugin
+(`blazemeter-perfecto@skills-dir`) — symlink the repo into `~/.claude/skills/` and Claude Code
+discovers it in place, with no marketplace install and no version pin (see the README "Install"
+section). Marketplace distribution (`.claude-plugin/marketplace.json`) is **deferred** until the
+plugin is built out further; the manifest is kept ready for that. Layout:
 
 - `skills/<name>/SKILL.md` — the skills (auto-discovered; invoked as `blazemeter-perfecto:<name>`).
 - `shared/conventions.md` — **the skill-authoring house style and Definition of Done. Read it
@@ -30,30 +34,26 @@ self-hosted marketplace (`.claude-plugin/marketplace.json`). Layout:
 CI (`.github/workflows/ci.yml`) lints every `SKILL.md` frontmatter, smoke-tests shared scripts'
 `--help`, and runs the tests.
 
-## Making changes take effect (release ritual)
+## Making changes take effect
 
-A Claude Code plugin install is **version-pinned**: a running install only picks up new or changed
-skills/commands when the plugin's `version` increases. Editing files in this repo does **not**
-update anyone's install on its own.
+With the **direct-from-git (skills-dir)** setup, the plugin is read **in place** from your checkout,
+so there is no version pin and no reinstall. Updating is just:
 
-So **every change that should ship must bump the version** — and `.claude-plugin/plugin.json` and
-`.claude-plugin/marketplace.json` must carry the **same** version. This is the mechanism; without
-it the change is invisible to installs (this is exactly why all but one skill went unseen until
-0.2.0).
-
-After the change merges, the plugin must be **reinstalled and reloaded** for the new version to
-take effect in a Claude Code session:
-
-```text
-/plugin install blazemeter-perfecto@blazemeter-perfecto-skills
-/reload-plugins      # or restart Claude Code
+```bash
+git -C ~/.claude/skills/blazemeter-perfecto pull
 ```
 
-These are **interactive Claude Code commands** — they run inside a live session, not from a shell,
-CI, or a git hook, so they **cannot be auto-run by the merge itself** (and the agent has no tool to
-invoke them). The achievable automation is the version bump (enforced via the Definition of Done in
-`shared/conventions.md`) plus this ritual: **when an agent lands a plugin change in a session, end
-by surfacing the two commands above for the user to run**; human maintainers run them after pulling.
+Then `/reload-plugins` (or a new session). Edits to a `SKILL.md` take effect immediately; changes
+to other components (`.mcp.json`, `hooks/`, `agents/`, …) need the reload. `/reload-plugins` is an
+interactive Claude Code command — when an agent lands a plugin change in a session, end by telling
+the user to run it (the agent has no tool to invoke it).
+
+> **Versioning only matters for the deferred marketplace path.** A *marketplace* install is
+> version-pinned (it copies the plugin into a cache and only updates when the plugin `version`
+> increases, with `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` carrying the
+> same value). That bites only if/when we publish via the marketplace — it's irrelevant to the
+> skills-dir dev loop above. Bump the version when preparing a marketplace release, not for every
+> edit.
 
 ## Agent skills
 

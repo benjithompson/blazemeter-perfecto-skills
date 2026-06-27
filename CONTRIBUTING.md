@@ -1,8 +1,9 @@
 # Contributing
 
-Thanks for helping grow the BlazeMeter / Perfecto skills! This repo is a Claude Code **plugin**:
-a set of expert-workflow skills distributed via a self-hosted marketplace. v1 goes depth-first on
-the BlazeMeter **Performance** pillar.
+Thanks for helping grow the BlazeMeter / Perfecto skills! This repo is a Claude Code **plugin** of
+expert-workflow skills. While it's under active development it loads directly from a local git
+checkout (a skills-directory plugin — see the README "Install" section); marketplace distribution is
+deferred until it's built out further. It goes depth-first on the BlazeMeter **Performance** pillar.
 
 By contributing you agree your contributions are licensed under the repo's
 [Apache-2.0 License](./LICENSE).
