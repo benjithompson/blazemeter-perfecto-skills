@@ -30,6 +30,10 @@ plugin is built out further; the manifest is kept ready for that. Layout:
   skills via `${CLAUDE_PLUGIN_ROOT}`.
 - `tests/` — fixture-driven tests for the deterministic layer; run with `pytest`.
 - `commands/` — optional thin command entry points to skills.
+- `.mcp.json` — bundles the BlazeMeter MCP server (launched via `uvx`) so enabling the plugin
+  auto-connects it; ships only env-var placeholders (`${BLAZEMETER_API_KEY}`), never secrets. A
+  manually-configured BlazeMeter MCP is deduped by endpoint (higher scope wins). Perfecto is not
+  bundled yet (no Perfecto skills). See ADR-0015.
 
 CI (`.github/workflows/ci.yml`) lints every `SKILL.md` frontmatter, smoke-tests shared scripts'
 `--help`, and runs the tests.

@@ -31,10 +31,13 @@ Each skill is **also a slash command**: once the plugin is installed, every skil
 ## Prerequisites
 
 1. **Claude Code** — the CLI, the VS Code extension, or the desktop app (all supported).
-2. **The BlazeMeter MCP server**, installed and connected to Claude Code. It is the source of
-   truth for capabilities — see [bzm-mcp](https://github.com/Blazemeter/bzm-mcp).
-3. **BlazeMeter API credentials configured for the MCP** (see below). These skills reuse them — no
-   second setup.
+2. **The BlazeMeter MCP server.** The plugin **bundles** its definition (`.mcp.json`), so enabling
+   the plugin auto-connects [bzm-mcp](https://github.com/Blazemeter/bzm-mcp) — you just need
+   [`uv`/`uvx`](https://docs.astral.sh/uv/) on your `PATH` (the bundled server launches it via
+   `uvx`). Already have a BlazeMeter MCP configured manually? No conflict — Claude Code dedupes by
+   endpoint and your existing config (higher precedence) wins.
+3. **BlazeMeter API credentials** (see below). The bundled server and the skills both read them from
+   the environment — one setup.
 
 ## Install
 
@@ -81,17 +84,19 @@ in the desktop app's **local** and **SSH** sessions (they are *not* available in
 The `~/.claude/skills/` symlink above is picked up by the desktop app the same as the CLI. Two
 desktop-specific notes:
 
-- **Configure the BlazeMeter (and Perfecto) MCP server for local sessions.** This plugin reuses the
-  MCP — it does not bundle it — so the MCP server must be connected in the desktop app just like in
-  the CLI (via `~/.claude.json` / `.mcp.json`, which desktop and CLI share, or the **+ →
-  Connectors** flow).
+- **The BlazeMeter MCP server is bundled.** The plugin's `.mcp.json` auto-connects it when the
+  plugin is enabled — no manual setup — as long as `uvx` resolves on the local-session `PATH` (the
+  server launches via `uvx`). An already-configured BlazeMeter MCP is deduped by endpoint, so your
+  existing setup wins. *(Perfecto MCP is not bundled yet — there are no Perfecto skills here; add it
+  manually if you need it.)*
 - **Environment variables: set them in the desktop env editor.** The desktop app inherits only
   `PATH` (plus a few Claude variables) from your shell profile — it does **not** pick up other
   `export`ed vars. So set your BlazeMeter credentials (`API_KEY_ID` + `API_KEY_SECRET`, or
   `BLAZEMETER_API_KEY`) via **Settings → Claude Code → local environment editor** (or the
-  environment dropdown in the prompt box → **Local** → gear icon). No language runtime is
-  required: every skill (including `blazemeter-report`, which fills a shipped HTML template) runs
-  with just the MCP and credentials — nothing is shelled out to a local interpreter.
+  environment dropdown in the prompt box → **Local** → gear icon) — the bundled MCP server reads
+  them from there too. No language runtime is required: every skill (including `blazemeter-report`,
+  which fills a shipped HTML template) runs with just the MCP and credentials — nothing is shelled
+  out to a local interpreter.
 
 ## Credentials
 
@@ -102,6 +107,12 @@ the MCP and you're done. Precedence:
    when **both** are set); else
 2. `BLAZEMETER_API_KEY` — a path to a BlazeMeter API key file: JSON of the shape
    `{ "id": "...", "secret": "..." }`.
+
+> The **bundled MCP server** (`.mcp.json`) launches bzm-mcp via `uvx`, which reads
+> **`BLAZEMETER_API_KEY`** (the key-file path) — set that env var and you're done. (The
+> `API_KEY_ID` + `API_KEY_SECRET` pair is bzm-mcp's *Docker* method; the `uvx` invocation we bundle
+> uses the key-file form.) The `.mcp.json` ships only a `${BLAZEMETER_API_KEY}` placeholder — never
+> a key or a path.
 
 Keys are **never committed** to a repo (key files like `api-key*.json` are gitignored) and **never
 embedded** in generated reports. A test's asset `auth.json` (which authenticates the system under
