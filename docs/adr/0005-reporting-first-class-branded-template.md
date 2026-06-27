@@ -1,5 +1,9 @@
 # Reporting is a first-class value area, filling the gaps the platform can't
 
+> **Status:** Mechanism superseded by [ADR-0014](0014-report-as-in-skill-model-filled-html-template.md)
+> — the branded template is now filled **in-skill** (token replacement + file write), not by a
+> deterministic Python renderer. The reporting-as-first-class-value intent below stands.
+
 Cross-cutting reporting and visualization is a primary value area for this repo, not an afterthought.
 
 Rationale: BlazeMeter's native reports are mostly *single-execution* views. The high-value gap is

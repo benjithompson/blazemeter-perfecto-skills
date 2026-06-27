@@ -38,8 +38,10 @@ short, every skill:
 - is MCP-first, with any REST fallback justified in the prose;
 - contains **no** personal absolute paths and **no** credentials.
 
-Shared, deterministic logic (scripts, the report renderer) goes in `shared/scripts/` and is
-referenced from skills via `${CLAUDE_PLUGIN_ROOT}`; it gets fixture tests under `tests/`.
+Shared, deterministic logic (scripts) goes in `shared/scripts/` and is referenced from skills via
+`${CLAUDE_PLUGIN_ROOT}`; it gets fixture tests under `tests/`. Skills that ship a static asset (e.g.
+the `blazemeter-report` HTML template) keep it in the skill's own `assets/` and fill it in-skill —
+no interpreter shelled out at runtime.
 
 ## Running checks locally
 
@@ -47,7 +49,7 @@ referenced from skills via `${CLAUDE_PLUGIN_ROOT}`; it gets fixture tests under 
 # 1. Frontmatter lint (no dependencies — standard-library Python only)
 python shared/scripts/lint_frontmatter.py skills
 
-# 2. Tests for the deterministic layer (mock/unit only by default)
+# 2. Tests for the deterministic layer
 python -m pip install -r requirements-dev.txt
 pytest
 ```
@@ -55,31 +57,6 @@ pytest
 CI runs exactly these on every push and pull request (frontmatter lint + script `--help` smoke +
 tests). A PR is ready when CI is green and the Definition of Done in `shared/conventions.md` is
 satisfied.
-
-### Live integration tests (optional, local only)
-
-Plain `pytest` runs only the hermetic mock tests. The `bzm_*` REST utilities also have **live**
-integration tests that hit real BlazeMeter end-to-end — these replace the old "run it once by
-hand" verify step (see `docs/adr/0013-live-integration-tests.md`). They are deselected by default
-and **skip** unless credentials and target ids are configured, so they never break CI.
-
-To run them locally:
-
-```bash
-# Configure once: copy the template and fill in (the file is gitignored), OR export the vars.
-cp tests/live.env.example tests/live.env
-
-# Credentials reuse the MCP's scheme (API_KEY_ID + API_KEY_SECRET, or BLAZEMETER_API_KEY → key
-# file). A gitignored api-key.json at the repo root is also picked up automatically.
-# Targets: BZM_LIVE_EXECUTION_ID (an execution that produced artifacts) and BZM_LIVE_TEST_ID
-# (a throwaway test to upload an auth.json asset to).
-
-pytest -m live          # run only the live tests
-pytest -m live -v       # ...verbose, to see which skipped vs ran
-```
-
-Any live target that isn't configured simply skips. We do **not** store a BlazeMeter key as a CI
-secret; live coverage stays a local opt-in.
 
 ## Credentials & safety
 

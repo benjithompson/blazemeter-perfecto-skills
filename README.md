@@ -21,7 +21,7 @@ Monitoring) are planned — see the [PRD](../../issues/1) and open issues.
 | `run-blazemeter-test` | Runs a test end-to-end — optionally sets a simple load profile (with confirmation), starts the execution, polls to completion, and reports a pass/fail summary against the test's failure criteria. |
 | `compare-blazemeter-runs` | Compares two executions (baseline vs candidate) — diffs response-time percentiles, throughput, and error rate with magnitude and direction, flags regressions past a threshold, and emits a ship / no-ship verdict. |
 | `triage-blazemeter-failure` | Deep-dives one failed or regressed run — breaks errors down by type and endpoint, ranks endpoint hot spots, summarizes anomalies, separates systemic problems from noise, and ends with prioritized next steps. |
-| `blazemeter-report` | Generates a branded, self-contained HTML cross-run trend & regression Report over a time window — trend charts, regression flags, and SLA compliance across many runs, rendered offline via the report engine. |
+| `blazemeter-report` | Generates a branded, self-contained HTML cross-run trend & regression Report over a time window — trend charts, regression flags, and SLA compliance across many runs, rendered offline from a shipped HTML template the skill fills in (no local interpreter needed). |
 
 Each skill is **also a slash command**: once the plugin is installed, every skill appears in the
 `/` menu (namespaced) as **`/blazemeter-perfecto:<skill-name>`**, e.g.
@@ -89,8 +89,9 @@ desktop-specific notes:
   `PATH` (plus a few Claude variables) from your shell profile — it does **not** pick up other
   `export`ed vars. So set your BlazeMeter credentials (`API_KEY_ID` + `API_KEY_SECRET`, or
   `BLAZEMETER_API_KEY`) via **Settings → Claude Code → local environment editor** (or the
-  environment dropdown in the prompt box → **Local** → gear icon). The `blazemeter-report` skill
-  also shells out to a `python` interpreter, so ensure one resolves on the local-session `PATH`.
+  environment dropdown in the prompt box → **Local** → gear icon). No language runtime is
+  required: every skill (including `blazemeter-report`, which fills a shipped HTML template) runs
+  with just the MCP and credentials — nothing is shelled out to a local interpreter.
 
 ## Credentials
 

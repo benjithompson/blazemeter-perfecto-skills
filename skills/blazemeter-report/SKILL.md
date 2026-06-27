@@ -3,9 +3,9 @@ name: blazemeter-report
 description: Generate a branded, self-contained HTML cross-run trend & regression Report for a BlazeMeter test over a time window — trend lines, regression flags, and SLA compliance across many runs. Use when asked for a shareable/stakeholder report, a release report, a multi-run trend or regression summary, or a portfolio/scorecard view the platform's single-run reports can't produce.
 ---
 
-Produce the flagship **Report**: retrieve many runs of a test (or a few tests) over a window, shape them into the report engine's **Report data model**, and render a branded, self-contained HTML file that surfaces trends, regressions, and SLA compliance across the window — the cross-execution/time view BlazeMeter's single-run reports can't give you.
+Produce the flagship **Report**: retrieve many runs of a test (or a few tests) over a window, shape them into the **Report data model**, and emit a branded, self-contained HTML file that surfaces trends, regressions, and SLA compliance across the window — the cross-execution/time view BlazeMeter's single-run reports can't give you.
 
-This skill **retrieves and normalizes**; the deterministic **report engine** renders. You build a Report data model (JSON) and hand it to `render_blazemeter_report.py`; the engine owns the layout, branding, and charts.
+This skill **retrieves and normalizes**, then fills a shipped HTML template. You build a Report data model (JSON) and drop it into a single static, self-contained template (`assets/report-template.html`); the template's baked-in CSS and vendored client-side JS own the layout, branding, and charts (it builds every section — context, summary, run history, regressions, SLA, endpoints, and the trend charts — from the data at open time). No local interpreter is involved: the render is a token replacement plus a file write, so the skill runs identically across the CLI, VS Code, and the desktop app.
 
 ## Step 0 — Resolve and confirm context (account → workspace → project → test)
 
@@ -103,7 +103,7 @@ For **endpoint hot spots**, use the **latest** run's `read_all_reports` → `req
 
 ## Step 4 — Assemble the Report data model (JSON)
 
-Build a single JSON object matching the engine's data model (authoritative shape: `shared/scripts/report_engine/model.py`). **Supply `generated_at` yourself** (the current time, ISO 8601) — the renderer is deterministic and never reads the clock. Put **no credentials** anywhere in the model.
+Build a single JSON object matching the Report data model (authoritative shape: the structure below — `meta` / `summary` / `runs` / `regressions` / `sla` / `endpoints`). **Supply `generated_at` yourself** (the current time, ISO 8601) — the template never reads the clock, so the render is deterministic. Put **no credentials** anywhere in the model.
 
 ```json
 {
@@ -142,19 +142,17 @@ Build a single JSON object matching the engine's data model (authoritative shape
 }
 ```
 
-Omit a section by leaving its array empty (or `sla` absent) — the engine renders a tidy "none" state. Write the JSON to a working file (e.g. a temp path you choose).
+Omit a section by leaving its array empty (or `sla` absent) — the template's client-side JS renders a tidy "none" state. Keep the JSON ready to inject in Step 5 (write it to a working file, or hold it inline).
 
-## Step 5 — Render the branded Report
+## Step 5 — Emit the branded Report (template fill, no interpreter)
 
-Hand the model to the engine's renderer (a deterministic, dependency-free shared script):
+The Report is a single shipped HTML template that renders itself from the data model in the browser — there is **no Python step and no local interpreter**. Produce the file with three deterministic actions:
 
-```
-python ${CLAUDE_PLUGIN_ROOT}/shared/scripts/render_blazemeter_report.py \
-  --model <path/to/report-model.json> \
-  --out <output dir, default ./blazemeter-reports/>
-```
+1. **Read the template** at `${CLAUDE_PLUGIN_ROOT}/skills/blazemeter-report/assets/report-template.html`. It bakes in the CSS, the approximated-BlazeMeter brand vars, and the vendored client-side JS that builds every section (context, summary, run history, regressions, SLA, endpoints, and the trend charts derived from `runs[]`).
+2. **Serialize your Step 4 data model to JSON** and **replace the single token `{{REPORT_DATA_JSON}}`** with it. The token sits inside `<script>window.REPORT_DATA = {{REPORT_DATA_JSON}};</script>`, so before substituting, **HTML-escape every `</` in the JSON to `<\/`** — that is the one transform that guarantees a string value (e.g. an endpoint label like `</checkout>`) can never close the `<script>` tag early. Substitute the token literally; do not otherwise reformat the template.
+3. **Write the result** as a `.html` file (default `./blazemeter-reports/`, filename a slug of the test name + `generated_at`). Use the `Write` tool — no shell, no `python`.
 
-It writes one self-contained HTML file (offline, no CDN — safe to email) and prints the path. To preview the HTML inline without a file, add `--stdout`. To re-brand, pass `--brand <brand.json>` (and an optional `--logo`); the default ships approximated BlazeMeter branding.
+The output is fully self-contained (offline, no CDN — safe to email): the same single token is the only thing that varies run-to-run, so layout and branding stay deterministic. To re-brand later, edit the CSS `:root` vars (and the inline logo SVG) in the template; that is a template edit, not a code change.
 
 ## Output template
 
@@ -177,10 +175,11 @@ Open the HTML file to see the full branded report (trend charts, run history, re
 ## Gotchas
 
 - **Field-name mapping is exact.** The summary report uses `average_response_time_ms` / `average_throughput_per_second` / `error_rate_percent` / `percentile_9X_ms` / `max_concurrent_users`; the data model uses `avg_rt_ms` / `rps` / `error_rate_pct` / `p9X_ms` / `concurrency`. Map deliberately (Step 2) — a mis-key silently drops a KPI from the charts.
-- **`generated_at` is supplied, not read.** The renderer never reads the clock (so it's deterministic). You provide the current timestamp; if you omit it the model fails validation.
+- **`generated_at` is supplied, not read.** The template never reads the clock (so the render is deterministic). You provide the current timestamp; `meta.title` and `meta.generated_at` are required — omit them and the header renders blank.
 - **Completion = `ended != null`.** Skip `aborted` / `error` / `noData` runs; including them distorts the trend. Note how many you skipped.
 - **Pagination.** `blazemeter_execution list` maxes at 50 per call — page with `offset` until the window is covered.
 - **Failure-criteria labels come from the test, not the execution.** Describe SLA rules with the test object's `failure_criteria.meta.*` labels (Step 0b); the execution only carries the overall `execution_status`, and there is no per-criterion per-run result array — attribute failures by comparing KPIs to thresholds.
 - **Load-config drift.** If `concurrency` varies across runs, raw throughput isn't apples-to-apples — say so and prefer RPS-per-VU.
-- **No credentials in the model.** The model holds data + narrative only; Platform Credentials never belong in it (and the renderer never reads them).
-- **The renderer is the source of layout/branding.** Don't hand-write HTML — always go through `render_blazemeter_report.py` so every report is consistent and on-brand. Output is self-contained and offline by design.
+- **No credentials in the model.** The model holds data + narrative only; Platform Credentials never belong in it (the template only ever sees the data you inject).
+- **Escape `</` before substituting.** The data model is injected into a `<script>` tag, so any `</` inside a string value (an endpoint label, a narrative line) must become `<\/` first — otherwise it can close the tag early and break the report. This is the only transform the JSON needs.
+- **The template is the source of layout/branding.** Don't hand-write report HTML or build sections yourself — always fill `assets/report-template.html` so every report is consistent and on-brand. Its client-side JS builds the sections and charts from `window.REPORT_DATA` at open time; output is self-contained and offline by design.

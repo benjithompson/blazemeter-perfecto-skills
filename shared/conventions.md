@@ -199,8 +199,10 @@ Before a skill merges:
 - [ ] Any shared script is in `shared/scripts/` and referenced via `${CLAUDE_PLUGIN_ROOT}`.
 - [ ] Uses MCP-first; any REST usage is justified in the prose.
 - [ ] Has an output template and a Gotchas section.
-- [ ] Deterministic shared logic (renderers, credential resolution) has fixture tests; ran once
-      manually against a real BlazeMeter test.
+- [ ] Any deterministic shared logic (e.g. the frontmatter linter) has fixture tests under `tests/`;
+      the skill itself was run once against a real BlazeMeter test. A skill that ships a static asset
+      (e.g. an HTML template the skill fills in) needs no interpreter and is verified by opening a
+      generated artifact.
 - [ ] Loads via the direct-from-git (skills-dir) setup — `git pull` + `/reload-plugins` picks the
       change up; no version bump needed for the dev loop. **Only bump the plugin `version`** (same
       value in `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`) when preparing a

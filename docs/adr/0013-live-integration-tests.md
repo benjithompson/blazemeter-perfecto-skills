@@ -1,5 +1,12 @@
 # Testing strategy: hermetic mock unit tests + credential-gated live integration tests
 
+> **Withdrawn.** The `bzm_*` REST utilities and their credential resolver were a one-off use case
+> that is no longer needed, so the live integration tests (and the harness this ADR describes) were
+> removed. The plugin's skills are MCP-first and ship no Python runtime code, so there is nothing
+> left for live tests to cover; the remaining deterministic layer (the frontmatter linter) keeps its
+> hermetic unit test. This ADR is kept as historical record. If REST-fallback utilities return
+> later, revisit this strategy.
+
 The deterministic shared scripts (credential resolution, the `bzm_*` REST utilities) are
 covered two ways, deliberately:
 
