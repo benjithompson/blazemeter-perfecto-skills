@@ -38,33 +38,48 @@ Each skill is **also a slash command**: once the plugin is installed, every skil
 
 ## Install
 
-The plugin lives in a self-hosted marketplace (this repo). Add the marketplace once, then install
-the plugin. The **same two commands work in the CLI, the VS Code extension, and the desktop app**
-(run them in the Claude Code prompt), and the skills then appear in every surface:
+While the plugin is under active development it loads **directly from a local git checkout** — no
+marketplace, no install step, no version pin. Clone the repo, then symlink it into your personal
+skills directory so Claude Code discovers it as a plugin:
 
-```text
-/plugin marketplace add benjithompson/blazemeter-perfecto-skills
-/plugin install blazemeter-perfecto@blazemeter-perfecto-skills
+```bash
+git clone https://github.com/benjithompson/blazemeter-perfecto-skills.git
+ln -s "$(pwd)/blazemeter-perfecto-skills" ~/.claude/skills/blazemeter-perfecto
 ```
 
-- `/plugin marketplace add` takes this GitHub `owner/repo` (it reads
-  `.claude-plugin/marketplace.json`).
-- `/plugin install <plugin>@<marketplace>` installs the `blazemeter-perfecto` plugin from the
-  `blazemeter-perfecto-skills` marketplace.
+Any folder under `~/.claude/skills/` that contains a `.claude-plugin/plugin.json` loads
+automatically on the next session as **`blazemeter-perfecto@skills-dir`** — the skills then appear
+(namespaced) in the `/` menu on the **CLI, the VS Code extension, and the desktop app** (the
+`~/.claude/skills/` location is shared across all three). No `/plugin install` needed.
 
-After installing (or updating), run `/reload-plugins` (or restart Claude Code) so the new skills
-load. The plugin is **version-pinned** — installs only pick up new skills when the plugin's
-`version` is bumped, so if you previously installed an older version and don't see all five skills,
-reinstall or update.
+> Don't want a symlink? Clone directly into `~/.claude/skills/blazemeter-perfecto` instead. Or, for
+> a one-off session, launch the CLI with `claude --plugin-dir /path/to/blazemeter-perfecto-skills`.
 
-> Prefer not to use the marketplace? The `skills/` folders are plain, copy-able skills — drop one
-> into your `~/.claude/skills/` (unnamespaced) as a fallback.
+### Updating
+
+Because the plugin is read **in place** from your checkout, updating is just:
+
+```bash
+git -C ~/.claude/skills/blazemeter-perfecto pull
+```
+
+Then `/reload-plugins` (or start a new session). Edits to a `SKILL.md` take effect immediately;
+changes to other components (`.mcp.json`, `hooks/`, etc.) need the reload. **No version bump or
+reinstall required** — that's the payoff of loading direct from git.
+
+To stop loading it, remove the symlink (`rm ~/.claude/skills/blazemeter-perfecto`) or run
+`claude plugin disable blazemeter-perfecto@skills-dir`.
+
+> **Marketplace distribution is deferred.** Once the plugin is built out further it will be
+> published via a self-hosted marketplace (`.claude-plugin/marketplace.json` is kept ready for
+> that). Until then, use the direct-from-git setup above.
 
 ### On the Claude Code desktop app
 
-Plugins, marketplaces, namespaced skills/commands, hooks, and MCP servers are all fully supported
+Skills-directory plugins, namespaced skills/commands, hooks, and MCP servers are all fully supported
 in the desktop app's **local** and **SSH** sessions (they are *not* available in cloud sessions).
-Install exactly as above. Two desktop-specific notes:
+The `~/.claude/skills/` symlink above is picked up by the desktop app the same as the CLI. Two
+desktop-specific notes:
 
 - **Configure the BlazeMeter (and Perfecto) MCP server for local sessions.** This plugin reuses the
   MCP — it does not bundle it — so the MCP server must be connected in the desktop app just like in

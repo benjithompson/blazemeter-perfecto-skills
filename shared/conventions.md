@@ -203,7 +203,8 @@ Before a skill merges:
       the skill itself was run once against a real BlazeMeter test. A skill that ships a static asset
       (e.g. an HTML template the skill fills in) needs no interpreter and is verified by opening a
       generated artifact.
-- [ ] **Bumped the plugin `version`** (same value in `.claude-plugin/plugin.json` and
-      `.claude-plugin/marketplace.json`) so installs actually pick up the change — installs are
-      version-pinned and won't update otherwise. After merge, reinstall + `/reload-plugins` to take
-      effect (see CLAUDE.md → "Making changes take effect").
+- [ ] Loads via the direct-from-git (skills-dir) setup — `git pull` + `/reload-plugins` picks the
+      change up; no version bump needed for the dev loop. **Only bump the plugin `version`** (same
+      value in `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`) when preparing a
+      *marketplace* release, since that path is version-pinned (see CLAUDE.md → "Making changes take
+      effect").

@@ -1,5 +1,10 @@
 # Distribution: a Claude Code plugin published via a marketplace
 
+> **Amended by [ADR-0014](0014-defer-marketplace-load-direct-from-git.md):** the marketplace path is
+> deferred during active development in favor of loading direct from a local git checkout
+> (skills-directory plugin). The marketplace design below still stands as the eventual distribution
+> mechanism.
+
 The repo is distributed as a **Claude Code plugin** (with a `.claude-plugin/` manifest) published
 through a **marketplace**, so users install once and use it in both the Claude Code CLI and the
 VS Code extension — both surfaces share the same config and plugin directories.
