@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "BlazeMeter-MCP": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/Blazemeter/bzm-mcp.git@v1.2.0",
+        "-q",
+        "bzm-mcp",
+        "--mcp"
+      ],
+      "env": {
+        "BLAZEMETER_API_KEY": "${BLAZEMETER_API_KEY}"
+      }
+    }
+  }
+}
