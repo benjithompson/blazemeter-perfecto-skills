@@ -1,5 +1,10 @@
 # Hybrid sharing: centralized assets, self-contained skill prose
 
+> **Status:** Partially superseded by [ADR-0014](0014-report-as-in-skill-model-filled-html-template.md)
+> — the branded report template/renderer is **no longer** centralized in `shared/scripts/`; it ships
+> as a static asset inside the `blazemeter-report` skill and is filled in-skill. The rest of this ADR
+> (centralized `bzm-*` auth/artifact scripts, self-contained prose) still holds.
+
 Skills share heavy, exact assets but keep their prose self-contained.
 
 - **Centralized** (referenced via `${CLAUDE_PLUGIN_ROOT}`): deterministic scripts (the `bzm-*`

@@ -37,8 +37,10 @@ short, every skill:
 - is MCP-first, with any REST fallback justified in the prose;
 - contains **no** personal absolute paths and **no** credentials.
 
-Shared, deterministic logic (scripts, the report renderer) goes in `shared/scripts/` and is
-referenced from skills via `${CLAUDE_PLUGIN_ROOT}`; it gets fixture tests under `tests/`.
+Shared, deterministic logic (scripts) goes in `shared/scripts/` and is referenced from skills via
+`${CLAUDE_PLUGIN_ROOT}`; it gets fixture tests under `tests/`. Skills that ship a static asset (e.g.
+the `blazemeter-report` HTML template) keep it in the skill's own `assets/` and fill it in-skill —
+no interpreter shelled out at runtime.
 
 ## Running checks locally
 

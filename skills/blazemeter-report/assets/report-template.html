@@ -1,0 +1,668 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BlazeMeter Report</title>
+<style>
+/*
+ * Self-contained BlazeMeter Report template.
+ *
+ * The brand vars below are baked in (approximated BlazeMeter branding). All
+ * layout is fixed here; only the data varies. The skill fills the single
+ * REPORT_DATA_JSON token (near the bottom) with the Report data model and
+ * writes the result as a standalone .html — no Python, no CDN, opens offline.
+ */
+:root {
+  --brand-primary: #1f6feb;
+  --brand-primary-dark: #14478f;
+  --brand-accent: #f5871f;
+  --brand-bg: #ffffff;
+  --brand-surface: #f6f8fa;
+  --brand-border: #d6dde6;
+  --brand-text: #1c2530;
+  --brand-muted: #5b6770;
+  --brand-good: #2e7d32;
+  --brand-warn: #ed6c02;
+  --brand-bad: #c62828;
+  --brand-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--brand-surface); color: var(--brand-text);
+  font-family: var(--brand-font); line-height: 1.5; font-size: 15px;
+}
+.report { max-width: 960px; margin: 0 auto; padding: 0 20px 64px; }
+.report-header {
+  display: flex; align-items: flex-end; justify-content: space-between; gap: 16px;
+  padding: 24px 0 18px; border-bottom: 3px solid var(--brand-primary); margin-bottom: 8px;
+}
+.brand-logo { height: 40px; width: auto; }
+.report-header .meta { text-align: right; color: var(--brand-muted); font-size: 12.5px; }
+h1 { font-size: 26px; margin: 22px 0 2px; }
+.subtitle { color: var(--brand-muted); margin: 0 0 14px; font-size: 15px; }
+h2 {
+  font-size: 17px; margin: 30px 0 12px; padding-bottom: 6px;
+  border-bottom: 1px solid var(--brand-border); color: var(--brand-primary-dark);
+}
+.card {
+  background: var(--brand-bg); border: 1px solid var(--brand-border);
+  border-radius: 10px; padding: 16px 18px; margin: 12px 0;
+}
+.context { display: flex; flex-wrap: wrap; gap: 6px 22px; font-size: 13px; color: var(--brand-muted); }
+.context b { color: var(--brand-text); font-weight: 600; }
+.verdict-badge {
+  display: inline-block; padding: 3px 12px; border-radius: 999px; font-weight: 700;
+  font-size: 13px; letter-spacing: .3px; color: #fff; background: var(--brand-primary);
+}
+.verdict-badge.good { background: var(--brand-good); }
+.verdict-badge.warn { background: var(--brand-warn); }
+.verdict-badge.bad  { background: var(--brand-bad); }
+.narrative p { margin: 8px 0; }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+th, td { text-align: right; padding: 7px 10px; border-bottom: 1px solid var(--brand-border); }
+th:first-child, td:first-child { text-align: left; }
+thead th { color: var(--brand-muted); font-weight: 600; border-bottom: 2px solid var(--brand-border); }
+tbody tr:hover { background: var(--brand-surface); }
+.status-pill { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.status-pass { background: rgba(46,125,50,.12); color: var(--brand-good); }
+.status-fail { background: rgba(198,40,40,.12); color: var(--brand-bad); }
+.status-other { background: rgba(91,103,112,.14); color: var(--brand-muted); }
+.charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 760px) { .charts-grid { grid-template-columns: 1fr; } }
+.chart-card { background: var(--brand-bg); border: 1px solid var(--brand-border); border-radius: 10px; padding: 12px 12px 8px; margin: 0; }
+.chart-title { font-weight: 600; font-size: 13.5px; margin-bottom: 4px; }
+.chart-svg { width: 100%; height: auto; display: block; }
+.chart-grid { stroke: var(--brand-border); stroke-width: 1; opacity: .7; }
+.chart-axis-line { stroke: var(--brand-muted); stroke-width: 1; }
+.chart-axis { fill: var(--brand-muted); font-size: 11px; }
+.chart-axis-y { text-anchor: end; }
+.chart-axis-x { text-anchor: middle; }
+.chart-axis-label { fill: var(--brand-muted); font-size: 11px; text-anchor: middle; }
+.chart-line { fill: none; stroke-width: 2.5; }
+.chart-dot { stroke: var(--brand-bg); stroke-width: 1.5; }
+.chart-bar { opacity: .9; }
+.chart-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; font-size: 12px; color: var(--brand-muted); }
+.chart-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+.chart-tooltip {
+  position: absolute; z-index: 10; pointer-events: none; background: var(--brand-text); color: #fff;
+  padding: 5px 9px; border-radius: 6px; font-size: 12px; line-height: 1.35; box-shadow: 0 2px 8px rgba(0,0,0,.25);
+}
+.reg-list { list-style: none; padding: 0; margin: 0; }
+.reg-item { display: flex; align-items: baseline; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--brand-border); }
+.reg-item:last-child { border-bottom: 0; }
+.sev-dot { width: 9px; height: 9px; border-radius: 999px; flex: 0 0 auto; }
+.sev-info { background: var(--brand-muted); } .sev-warning { background: var(--brand-warn); } .sev-critical { background: var(--brand-bad); }
+.reg-kpi { font-weight: 600; } .reg-delta { font-variant-numeric: tabular-nums; }
+.delta-up { color: var(--brand-bad); } .delta-down { color: var(--brand-good); }
+.muted { color: var(--brand-muted); }
+.empty { color: var(--brand-muted); font-style: italic; }
+.report-footer { margin-top: 36px; padding-top: 14px; border-top: 1px solid var(--brand-border); color: var(--brand-muted); font-size: 12px; }
+@media print { body { background: #fff; } .card, .chart-card { break-inside: avoid; } }
+</style>
+</head>
+<body>
+<div class="report">
+  <header class="report-header">
+    <div class="brand">
+      <svg class="brand-logo" viewBox="0 0 232 40" role="img" aria-label="BlazeMeter (approximated)" xmlns="http://www.w3.org/2000/svg">
+        <rect x="0" y="2" width="36" height="36" rx="9" fill="var(--brand-primary)"/>
+        <path d="M20 8 L13 22 h6 l-3 10 11 -15 h-6 z" fill="#ffffff"/>
+        <text x="46" y="20" font-family="var(--brand-font)" font-size="17" font-weight="700"
+              letter-spacing="0.5" fill="var(--brand-text)">BlazeMeter</text>
+        <text x="46" y="33" font-family="var(--brand-font)" font-size="9" font-weight="600"
+              letter-spacing="2.4" fill="var(--brand-muted)">PERFORMANCE&#160;REPORT</text>
+      </svg>
+    </div>
+    <div class="meta" id="report-generated"></div>
+  </header>
+
+  <h1 id="report-title"></h1>
+  <p class="subtitle" id="report-subtitle"></p>
+  <div class="card context" id="report-context"></div>
+
+  <h2>Executive Summary</h2>
+  <div class="card" id="report-summary"></div>
+
+  <h2>Trends</h2>
+  <section id="report-charts" class="charts-grid"></section>
+
+  <h2>Run history</h2>
+  <div class="card" id="report-runs"></div>
+
+  <h2>Regressions</h2>
+  <div class="card" id="report-regressions"></div>
+
+  <h2>SLA / Failure-criteria compliance</h2>
+  <div class="card" id="report-sla"></div>
+
+  <h2>Endpoint hot spots</h2>
+  <div class="card" id="report-endpoints"></div>
+
+  <footer class="report-footer">
+    BlazeMeter (approximated) · self-contained report, generated offline · branding is approximated
+  </footer>
+</div>
+
+<!--
+  The skill replaces the REPORT_DATA_JSON token below (the only one in this file)
+  with the Report data model — the meta/summary/runs/regressions/sla/endpoints
+  object built in Step 4 — HTML-escaping the sequence "less-than slash" to its
+  backslash-escaped form so a string value can never close this script tag early.
+-->
+<script>window.REPORT_DATA = {{REPORT_DATA_JSON}};</script>
+<script>
+/*
+ * blazemeter-report engine — renders every section CLIENT-SIDE from the global
+ * window.REPORT_DATA (the Report data model). Vendored, dependency-free, no CDN,
+ * no network — the file is a single self-contained artifact that opens offline.
+ *
+ * Layout is deterministic: given the same data model, the DOM is identical. Only
+ * the data varies. Tables, the summary, regressions, SLA, endpoints, and the
+ * trend charts (derived from runs[]) are all built here.
+ */
+(function () {
+  "use strict";
+
+  // Brand colours the charts need (must match the CSS :root vars above).
+  var BRAND = { primary: "#1f6feb", accent: "#f5871f", bad: "#c62828" };
+
+  var SVGNS = "http://www.w3.org/2000/svg";
+  var W = 720, H = 300, PAD = { t: 16, r: 16, b: 46, l: 56 };
+
+  // --- small helpers ---------------------------------------------------------
+
+  function emptySpan(text) {
+    var s = document.createElement("span");
+    s.className = "empty";
+    s.textContent = text;
+    return s;
+  }
+  function mutedDash(text) {
+    var s = document.createElement("span");
+    s.className = "muted";
+    s.textContent = text || "–";
+    return s;
+  }
+  function setText(id, text) {
+    var n = document.getElementById(id);
+    if (n) n.textContent = text;
+  }
+
+  // Mirror of the old renderer's _num: thousands-grouped, integer when whole,
+  // else fixed decimals. Returns a string (callers handle the null/muted case).
+  function numStr(v, decimals, suffix) {
+    decimals = decimals == null ? 1 : decimals;
+    suffix = suffix || "";
+    var factor = Math.pow(10, decimals);
+    var rounded = Math.round(v * factor) / factor;
+    var body;
+    if (rounded === Math.trunc(rounded)) {
+      body = Math.trunc(rounded).toLocaleString("en-US");
+    } else {
+      body = rounded.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+    }
+    return body + suffix;
+  }
+  function numCell(td, v, decimals, suffix) {
+    if (v == null) { td.appendChild(mutedDash()); return; }
+    td.appendChild(document.createTextNode(numStr(v, decimals, suffix)));
+  }
+
+  function shortTs(run) {
+    if (run.label) return run.label;
+    var ts = run.timestamp;
+    return ts ? ts.slice(0, 16).replace("T", " ") : run.execution_id;
+  }
+
+  function statusPill(status) {
+    var s = (status || "").toLowerCase();
+    var cls = s === "pass" ? "status-pass"
+      : (s === "fail" || s === "error" || s === "abort") ? "status-fail"
+      : "status-other";
+    var span = document.createElement("span");
+    span.className = "status-pill " + cls;
+    span.textContent = status || "—";
+    return span;
+  }
+
+  function verdictClass(verdict) {
+    var v = (verdict || "").toUpperCase();
+    function has() { for (var i = 0; i < arguments.length; i++) if (v.indexOf(arguments[i]) >= 0) return true; return false; }
+    if (has("SHIP", "PASS", "STABLE", "GREEN", "OK") && v.indexOf("NO-SHIP") < 0 && v.indexOf("NO SHIP") < 0) return "good";
+    if (has("NO-SHIP", "NO SHIP", "FAIL", "REGRESS", "RED", "BLOCK")) return "bad";
+    if (has("WARN", "WATCH", "CAUTION", "AMBER")) return "warn";
+    return "";
+  }
+
+  // --- header + context ------------------------------------------------------
+
+  function buildHeader(model) {
+    var meta = model.meta || {};
+    if (meta.title) document.title = meta.title;
+    setText("report-title", meta.title || "");
+    setText("report-subtitle", meta.subtitle || "");
+    var gen = "Generated " + (meta.generated_at || "");
+    if (meta.window_start || meta.window_end) {
+      gen += " · window " + (meta.window_start || "…") + " → " + (meta.window_end || "…");
+    }
+    setText("report-generated", gen);
+  }
+
+  function buildContext(model) {
+    var host = document.getElementById("report-context");
+    var ctx = (model.meta && model.meta.context) || {};
+    var pairs = [["Account", ctx.account], ["Workspace", ctx.workspace], ["Project", ctx.project], ["Test", ctx.test]];
+    var any = false;
+    pairs.forEach(function (p) {
+      var ref = p[1];
+      if (!ref || !ref.name) return;
+      any = true;
+      var span = document.createElement("span");
+      var b = document.createElement("b");
+      b.textContent = p[0];
+      span.appendChild(b);
+      span.appendChild(document.createTextNode(" " + ref.name));
+      if (ref.id) {
+        var idspan = document.createElement("span");
+        idspan.className = "muted";
+        idspan.textContent = " (" + ref.id + ")";
+        span.appendChild(idspan);
+      }
+      host.appendChild(span);
+    });
+    if (!any) host.appendChild(emptySpan("No context supplied."));
+  }
+
+  // --- summary ---------------------------------------------------------------
+
+  function buildSummary(model) {
+    var host = document.getElementById("report-summary");
+    var s = model.summary || {};
+    var any = false;
+    if (s.verdict) {
+      any = true;
+      var p = document.createElement("p");
+      var badge = document.createElement("span");
+      badge.className = ("verdict-badge " + verdictClass(s.verdict)).trim();
+      badge.textContent = s.verdict;
+      p.appendChild(badge);
+      host.appendChild(p);
+    }
+    if (s.headline) {
+      any = true;
+      var p2 = document.createElement("p");
+      var st = document.createElement("strong");
+      st.textContent = s.headline;
+      p2.appendChild(st);
+      host.appendChild(p2);
+    }
+    if (s.narrative && s.narrative.length) {
+      any = true;
+      var div = document.createElement("div");
+      div.className = "narrative";
+      s.narrative.forEach(function (para) {
+        var pp = document.createElement("p");
+        pp.textContent = para;
+        div.appendChild(pp);
+      });
+      host.appendChild(div);
+    }
+    if (!any) host.appendChild(emptySpan("No summary provided."));
+  }
+
+  // --- run history table -----------------------------------------------------
+
+  function buildRuns(model) {
+    var host = document.getElementById("report-runs");
+    var runs = model.runs || [];
+    if (!runs.length) { host.appendChild(emptySpan("No runs in this report.")); return; }
+    var table = document.createElement("table");
+    table.innerHTML = "<thead><tr><th>Run</th><th>Avg RT</th><th>p90</th><th>p95</th><th>p99</th>" +
+      "<th>RPS</th><th>Err %</th><th>Status</th></tr></thead>";
+    var tbody = document.createElement("tbody");
+    runs.forEach(function (r) {
+      var k = r.kpis || {};
+      var tr = document.createElement("tr");
+      var tdRun = document.createElement("td");
+      tdRun.title = "execution " + r.execution_id;
+      tdRun.textContent = shortTs(r);
+      tr.appendChild(tdRun);
+      [[k.avg_rt_ms, 1], [k.p90_ms, 1], [k.p95_ms, 1], [k.p99_ms, 1], [k.rps, 2], [k.error_rate_pct, 2]].forEach(function (pair) {
+        var td = document.createElement("td");
+        numCell(td, pair[0], pair[1]);
+        tr.appendChild(td);
+      });
+      var tdStatus = document.createElement("td");
+      tdStatus.appendChild(statusPill(r.status));
+      tr.appendChild(tdStatus);
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    host.appendChild(table);
+  }
+
+  // --- regressions -----------------------------------------------------------
+
+  function buildRegressions(model) {
+    var host = document.getElementById("report-regressions");
+    var regs = model.regressions || [];
+    if (!regs.length) { host.appendChild(emptySpan("No regressions flagged.")); return; }
+    var ul = document.createElement("ul");
+    ul.className = "reg-list";
+    regs.forEach(function (r) {
+      var sev = (["info", "warning", "critical"].indexOf(r.severity) >= 0) ? r.severity : "info";
+      var arrow = r.direction === "up" ? "▲" : r.direction === "down" ? "▼" : "→";
+      var dcls = r.direction === "up" ? "delta-up" : r.direction === "down" ? "delta-down" : "";
+      var li = document.createElement("li");
+      li.className = "reg-item";
+      var dot = document.createElement("span");
+      dot.className = "sev-dot sev-" + sev;
+      li.appendChild(dot);
+      var kpi = document.createElement("span");
+      kpi.className = "reg-kpi";
+      kpi.textContent = r.kpi;
+      li.appendChild(kpi);
+      var delta = document.createElement("span");
+      delta.className = "reg-delta";
+      var from = r.from_value != null ? r.from_value : 0;
+      var to = r.to_value != null ? r.to_value : 0;
+      var pct = r.pct_change != null ? r.pct_change : 0;
+      delta.appendChild(document.createTextNode(numStr(from, 2) + " → " + numStr(to, 2) + " "));
+      var ch = document.createElement("span");
+      if (dcls) ch.className = dcls;
+      ch.textContent = "(" + arrow + " " + numStr(Math.abs(pct), 1) + "%)";
+      delta.appendChild(ch);
+      li.appendChild(delta);
+      if (r.note) {
+        li.appendChild(document.createTextNode(" "));
+        var n = document.createElement("span");
+        n.className = "muted";
+        n.textContent = "— " + r.note;
+        li.appendChild(n);
+      }
+      ul.appendChild(li);
+    });
+    host.appendChild(ul);
+  }
+
+  // --- SLA -------------------------------------------------------------------
+
+  function buildSla(model) {
+    var host = document.getElementById("report-sla");
+    var sla = model.sla;
+    if (!sla) { host.appendChild(emptySpan("No SLA / failure criteria evaluated.")); return; }
+    var pass = sla.pass_count || 0, fail = sla.fail_count || 0, total = pass + fail;
+    var p = document.createElement("p");
+    var head = document.createElement("strong");
+    head.textContent = String(pass);
+    p.appendChild(head);
+    p.appendChild(document.createTextNode(" passed, "));
+    var head2 = document.createElement("strong");
+    head2.textContent = String(fail);
+    p.appendChild(head2);
+    p.appendChild(document.createTextNode(" failed" + (total ? (" of " + total + " runs") : "")));
+    host.appendChild(p);
+    var rules = sla.rules || [];
+    if (!rules.length) return;
+    var table = document.createElement("table");
+    table.innerHTML = "<thead><tr><th>Criterion</th><th>Threshold</th><th>Pass rate</th><th>Note</th></tr></thead>";
+    var tbody = document.createElement("tbody");
+    rules.forEach(function (r) {
+      var tr = document.createElement("tr");
+      var c1 = document.createElement("td"); c1.textContent = r.label; tr.appendChild(c1);
+      var c2 = document.createElement("td"); c2.textContent = r.threshold || ""; tr.appendChild(c2);
+      var c3 = document.createElement("td"); numCell(c3, r.pass_rate_pct != null ? r.pass_rate_pct : null, 1, "%"); tr.appendChild(c3);
+      var c4 = document.createElement("td");
+      if (r.note) c4.textContent = r.note; else c4.appendChild(mutedDash("—"));
+      tr.appendChild(c4);
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    host.appendChild(table);
+  }
+
+  // --- endpoint hot spots ----------------------------------------------------
+
+  function buildEndpoints(model) {
+    var host = document.getElementById("report-endpoints");
+    var eps = model.endpoints || [];
+    if (!eps.length) { host.appendChild(emptySpan("No per-endpoint breakdown.")); return; }
+    var table = document.createElement("table");
+    table.innerHTML = "<thead><tr><th>Endpoint</th><th>p95</th><th>Err %</th><th>Trend</th></tr></thead>";
+    var tbody = document.createElement("tbody");
+    eps.forEach(function (e) {
+      var tr = document.createElement("tr");
+      var c1 = document.createElement("td"); c1.textContent = e.name; tr.appendChild(c1);
+      var c2 = document.createElement("td"); numCell(c2, e.p95_ms != null ? e.p95_ms : null, 1); tr.appendChild(c2);
+      var c3 = document.createElement("td"); numCell(c3, e.error_rate_pct != null ? e.error_rate_pct : null, 2); tr.appendChild(c3);
+      var c4 = document.createElement("td");
+      if (e.trend) c4.textContent = e.trend; else c4.appendChild(mutedDash("—"));
+      tr.appendChild(c4);
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    host.appendChild(table);
+  }
+
+  // --- chart specs derived from the data (the engine owns this, not the model) ---
+
+  function buildChartSpecs(model) {
+    var runs = model.runs || [];
+    if (!runs.length) return [];
+    var xlabels = runs.map(shortTs);
+    function col(attr) { return runs.map(function (r) { return r.kpis ? r.kpis[attr] : null; }); }
+    function hasAny(vals) { return vals.some(function (v) { return v != null; }); }
+    var charts = [];
+
+    var rtSeries = [
+      ["p90", col("p90_ms"), BRAND.primary],
+      ["p95", col("p95_ms"), BRAND.accent],
+      ["p99", col("p99_ms"), BRAND.bad],
+    ].filter(function (s) { return hasAny(s[1]); });
+    if (rtSeries.length) {
+      charts.push({
+        id: "rt", type: "line", title: "Response time (ms)", yLabel: "ms", xLabels: xlabels,
+        series: rtSeries.map(function (s) { return { name: s[0], color: s[2], values: s[1] }; }),
+      });
+    }
+
+    if (hasAny(col("error_rate_pct"))) {
+      charts.push({
+        id: "err", type: "line", title: "Error rate (%)", yLabel: "%", xLabels: xlabels,
+        series: [{ name: "error %", color: BRAND.bad, values: col("error_rate_pct") }],
+      });
+    }
+
+    if (hasAny(col("rps"))) {
+      charts.push({
+        id: "rps", type: "line", title: "Throughput (RPS)", yLabel: "req/s", xLabels: xlabels,
+        series: [{ name: "RPS", color: BRAND.primary, values: col("rps") }],
+      });
+    }
+
+    return charts;
+  }
+
+  // --- SVG chart primitives (vendored, dependency-free) ----------------------
+
+  function el(tag, attrs, text) {
+    var n = document.createElementNS(SVGNS, tag);
+    if (attrs) { for (var k in attrs) { if (attrs[k] != null) n.setAttribute(k, attrs[k]); } }
+    if (text != null) n.textContent = text;
+    return n;
+  }
+  function fmt(v) {
+    if (v == null || isNaN(v)) return "–";
+    var a = Math.abs(v);
+    if (a >= 1000) return (Math.round(v * 10) / 10).toLocaleString();
+    if (a >= 10) return String(Math.round(v * 10) / 10);
+    return String(Math.round(v * 100) / 100);
+  }
+  function niceMax(m) {
+    if (m <= 0) return 1;
+    var pow = Math.pow(10, Math.floor(Math.log10(m)));
+    var n = m / pow;
+    var step = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
+    return step * pow;
+  }
+
+  function tooltip() {
+    var t = document.getElementById("bzm-tooltip");
+    if (!t) {
+      t = document.createElement("div");
+      t.id = "bzm-tooltip";
+      t.className = "chart-tooltip";
+      t.style.display = "none";
+      document.body.appendChild(t);
+    }
+    return t;
+  }
+  function showTip(html, evt) {
+    var t = tooltip();
+    t.innerHTML = html;
+    t.style.display = "block";
+    t.style.left = (evt.pageX + 12) + "px";
+    t.style.top = (evt.pageY + 12) + "px";
+  }
+  function hideTip() { tooltip().style.display = "none"; }
+
+  function frame(svg, yMax, yLabel, xLabels) {
+    var plotW = W - PAD.l - PAD.r, plotH = H - PAD.t - PAD.b;
+    var ticks = 4;
+    for (var i = 0; i <= ticks; i++) {
+      var yv = (yMax / ticks) * i;
+      var y = PAD.t + plotH - (yv / yMax) * plotH;
+      svg.appendChild(el("line", { x1: PAD.l, y1: y, x2: W - PAD.r, y2: y, class: "chart-grid" }));
+      svg.appendChild(el("text", { x: PAD.l - 8, y: y + 4, class: "chart-axis chart-axis-y" }, fmt(yv)));
+    }
+    if (yLabel) {
+      var yl = el("text", { x: 14, y: PAD.t + plotH / 2, class: "chart-axis-label",
+        transform: "rotate(-90 14 " + (PAD.t + plotH / 2) + ")" }, yLabel);
+      svg.appendChild(yl);
+    }
+    var n = xLabels.length;
+    for (var j = 0; j < n; j++) {
+      var x = n === 1 ? PAD.l + plotW / 2 : PAD.l + (plotW * j) / (n - 1);
+      svg.appendChild(el("text", { x: x, y: H - PAD.b + 20, class: "chart-axis chart-axis-x" }, xLabels[j]));
+    }
+    svg.appendChild(el("line", { x1: PAD.l, y1: PAD.t + plotH, x2: W - PAD.r, y2: PAD.t + plotH, class: "chart-axis-line" }));
+  }
+
+  function xAt(i, n) {
+    var plotW = W - PAD.l - PAD.r;
+    return n === 1 ? PAD.l + plotW / 2 : PAD.l + (plotW * i) / (n - 1);
+  }
+  function yAt(v, yMax) {
+    var plotH = H - PAD.t - PAD.b;
+    return PAD.t + plotH - (v / yMax) * plotH;
+  }
+
+  function lineChart(spec) {
+    var svg = el("svg", { viewBox: "0 0 " + W + " " + H, class: "chart-svg",
+      role: "img", "aria-label": spec.title || "chart" });
+    var allVals = [];
+    spec.series.forEach(function (s) { (s.values || []).forEach(function (v) { if (v != null) allVals.push(v); }); });
+    var yMax = niceMax(allVals.length ? Math.max.apply(null, allVals) : 1);
+    var n = spec.xLabels.length;
+    frame(svg, yMax, spec.yLabel, spec.xLabels);
+    spec.series.forEach(function (s) {
+      var pts = [], coords = [];
+      (s.values || []).forEach(function (v, i) {
+        if (v == null) return;
+        var x = xAt(i, n), y = yAt(v, yMax);
+        pts.push(x + "," + y); coords.push({ x: x, y: y, v: v, i: i });
+      });
+      if (pts.length > 1) svg.appendChild(el("polyline", { points: pts.join(" "), class: "chart-line", stroke: s.color }));
+      coords.forEach(function (c) {
+        var dot = el("circle", { cx: c.x, cy: c.y, r: 4, class: "chart-dot", fill: s.color });
+        dot.addEventListener("mousemove", function (e) {
+          showTip("<strong>" + s.name + "</strong><br>" + spec.xLabels[c.i] + ": " + fmt(c.v), e);
+        });
+        dot.addEventListener("mouseleave", hideTip);
+        svg.appendChild(dot);
+      });
+    });
+    return withLegend(spec, svg, spec.series.map(function (s) { return { name: s.name, color: s.color }; }));
+  }
+
+  function barChart(spec) {
+    var svg = el("svg", { viewBox: "0 0 " + W + " " + H, class: "chart-svg",
+      role: "img", "aria-label": spec.title || "chart" });
+    var bars = spec.bars || [];
+    var yMax = niceMax(bars.length ? Math.max.apply(null, bars.map(function (b) { return Math.abs(b.value); })) : 1);
+    frame(svg, yMax, spec.yLabel, bars.map(function (b) { return b.label; }));
+    var plotW = W - PAD.l - PAD.r, plotH = H - PAD.t - PAD.b;
+    var bw = (plotW / Math.max(bars.length, 1)) * 0.6;
+    bars.forEach(function (b, i) {
+      var cx = bars.length === 1 ? PAD.l + plotW / 2 : PAD.l + (plotW * i) / (bars.length - 1);
+      var h = (Math.abs(b.value) / yMax) * plotH;
+      var rect = el("rect", { x: cx - bw / 2, y: PAD.t + plotH - h, width: bw, height: h,
+        rx: 3, class: "chart-bar", fill: b.color });
+      rect.addEventListener("mousemove", function (e) { showTip("<strong>" + b.label + "</strong><br>" + fmt(b.value), e); });
+      rect.addEventListener("mouseleave", hideTip);
+      svg.appendChild(rect);
+    });
+    return withLegend(spec, svg, null);
+  }
+
+  function withLegend(spec, svg, legend) {
+    var fig = document.createElement("figure");
+    fig.className = "chart-card";
+    if (spec.title) {
+      var cap = document.createElement("figcaption");
+      cap.className = "chart-title";
+      cap.textContent = spec.title;
+      fig.appendChild(cap);
+    }
+    fig.appendChild(svg);
+    if (legend && legend.length > 1) {
+      var lg = document.createElement("div");
+      lg.className = "chart-legend";
+      legend.forEach(function (s) {
+        var item = document.createElement("span");
+        item.className = "chart-legend-item";
+        item.innerHTML = '<span class="chart-swatch" style="background:' + s.color + '"></span>' + s.name;
+        lg.appendChild(item);
+      });
+      fig.appendChild(lg);
+    }
+    return fig;
+  }
+
+  function renderCharts(charts) {
+    var host = document.getElementById("report-charts");
+    if (!host) return;
+    charts.forEach(function (spec) {
+      try {
+        var node = spec.type === "bar" ? barChart(spec) : lineChart(spec);
+        host.appendChild(node);
+      } catch (err) { /* a bad spec must never blank the whole report */ }
+    });
+  }
+
+  // --- orchestration ---------------------------------------------------------
+
+  function render() {
+    var model = window.REPORT_DATA || {};
+    if (!model.meta) model.meta = {};
+    buildHeader(model);
+    buildContext(model);
+    buildSummary(model);
+    renderCharts(buildChartSpecs(model));
+    buildRuns(model);
+    buildRegressions(model);
+    buildSla(model);
+    buildEndpoints(model);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", render);
+  } else {
+    render();
+  }
+})();
+</script>
+</body>
+</html>
