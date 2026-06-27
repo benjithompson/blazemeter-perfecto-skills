@@ -1,0 +1,94 @@
+{
+  "kind": "portfolio",
+  "meta": {
+    "title": "Acme Web — Performance Portfolio",
+    "subtitle": "5 tests · Q2 2026",
+    "generated_at": "2026-06-27T09:00:00Z",
+    "window_start": "2026-04-01",
+    "window_end": "2026-06-27",
+    "context": {
+      "account": { "name": "Acme", "id": "10001" },
+      "workspace": { "name": "Web Performance", "id": "20002" },
+      "project": { "name": "Storefront", "id": "30003" },
+      "tests_count": 5
+    }
+  },
+  "summary": {
+    "verdict": "REGRESSED",
+    "headline": "1 critical, 1 at-risk across the storefront suite this quarter.",
+    "narrative": [
+      "Checkout regressed sharply and is breaching SLA on most runs.",
+      "Search and Cart are healthy; Login is recovering."
+    ]
+  },
+  "tests": [
+    {
+      "name": "Checkout Flow",
+      "id": "t-checkout",
+      "health": "critical",
+      "runs": 14,
+      "sla_compliance_pct": 57.1,
+      "trend": "degrading",
+      "regressed": true,
+      "worst_kpi_move": "p95 +34%",
+      "baseline_source": "last-passing",
+      "note": "p95 climbed steadily since the 1.4 release."
+    },
+    {
+      "name": "Product Search",
+      "id": "t-search",
+      "health": "healthy",
+      "runs": 22,
+      "sla_compliance_pct": 100,
+      "trend": "stable",
+      "regressed": false,
+      "baseline_source": "committed file"
+    },
+    {
+      "name": "Login",
+      "id": "t-login",
+      "health": "at-risk",
+      "runs": 9,
+      "sla_compliance_pct": 88.9,
+      "trend": "improving",
+      "regressed": false,
+      "worst_kpi_move": "error rate +1.8%",
+      "baseline_source": "last-passing"
+    },
+    {
+      "name": "Cart Update",
+      "id": "t-cart",
+      "health": "healthy",
+      "runs": 18,
+      "sla_compliance_pct": 94.4,
+      "trend": "stable",
+      "regressed": false,
+      "baseline_source": "committed file"
+    },
+    {
+      "name": "Catalog Browse </checkout>",
+      "id": "t-catalog",
+      "health": "healthy",
+      "runs": 11,
+      "sla_compliance_pct": 90.9,
+      "trend": "stable",
+      "regressed": false
+    }
+  ],
+  "incidents": [
+    {
+      "severity": "critical",
+      "test": "Checkout Flow",
+      "run_id": "ex-9911",
+      "kpi": "error rate",
+      "detail": "26.7% vs baseline 0.4%; failed criteria"
+    },
+    {
+      "severity": "warning",
+      "test": "Login",
+      "run_id": "ex-8820",
+      "kpi": "p95 response time",
+      "detail": "rose 18% over the quarter but still within SLA"
+    }
+  ]
+}
