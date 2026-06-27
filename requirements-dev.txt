@@ -1,3 +1,6 @@
 # Dev/test dependencies. The plugin itself ships no Python runtime deps, and the
 # frontmatter linter is standard-library only — this is just for running the tests.
 pytest>=8,<10
+# Used by tests/test_bzm_ci_scaffold.py to parse the generated workflow YAML and
+# assert it is valid GitHub Actions YAML. Not a runtime dependency of any skill.
+pyyaml>=6,<7
