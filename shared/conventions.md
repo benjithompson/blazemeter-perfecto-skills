@@ -148,6 +148,50 @@ chosen context to disk or cache it across sessions.
 Respect the hierarchy **Account → Workspace → Project → Test → Execution**; validate each level
 before operating on the next.
 
+### 4.7 Cross-test variant — resolve to a *scope*, then enumerate the tests within it
+
+§4.1–4.6 resolve **down to a single test**. That is the right shape for **single-test skills** —
+`analyze` / `run` / `compare` / `triage` operate on one test (or one execution of it), so they use
+§4 exactly as written.
+
+Some skills instead operate over **many tests at once** — e.g. `daily-digest` and `portfolio-report`,
+which summarize or roll up every test in a workspace or project. These use this **cross-test
+variant**: resolve **account → workspace → project**, then **enumerate the tests within that
+confirmed scope** instead of picking one.
+
+The variant **reuses every guarantee** of the single-test step — it changes only the final level:
+
+1. **Resolve account → workspace → project** with the **same tiered pick rule** (§4.2) at each
+   level: confirm-or-override the default, list small sets as a numbered menu with ids, and
+   **ask the user to name or paste** the workspace/project when the first page comes back full.
+   A pasted **id short-circuits** a level. Apply the **same strict failure handling** (§4.3) — no
+   silent fall-back to the default at any level.
+2. **Choose the scope to roll up over.** The resolved scope is either the **project** (roll up its
+   tests) or the **workspace** (roll up across all its projects), depending on what the skill
+   declares. Stop at that level — **do not** descend to a single test.
+3. **Enumerate the tests in that scope** by paging `blazemeter_tests list` (`limit: 50`) to
+   completion. Enumeration is the point here, so a full first page is **not** a reason to ask the
+   user to name one test — keep paging and operate over the whole set. (If the scope is so large
+   that enumerating is impractical, say so and ask the user to **narrow the scope** to a specific
+   project — never silently truncate to "the first page".)
+4. **Honor the per-account AI Consent gate** (§4.4) on the resolved account before enumerating, the
+   same as the single-test step.
+5. **Display the resolved scope and the count of tests it covers** before acting — the cross-test
+   analogue of §4.5 — so the run is auditable and the user sees what is in scope:
+
+   ```
+   Scope:      Project <project name>  (ID: <project_id>)
+   Workspace:  <workspace name>  (ID: <workspace_id>)
+   Account:    <account name>  (ID: <account_id>)
+   Tests:      <N> tests in scope
+   ```
+
+6. **Carry the resolved scope forward** as conversational memory and **never persist it** (§4.6),
+   exactly as the single-test step carries the account/workspace forward.
+
+In short: single-test skills resolve **to a test**; cross-test skills resolve **to a scope and
+enumerate its tests**. Same don't-assume guarantees, one fewer level of narrowing.
+
 ## 5. Integration: MCP-first, REST as a documented fallback
 
 - Prefer the **BlazeMeter MCP** tools (`blazemeter_*`). The
@@ -156,6 +200,11 @@ before operating on the next.
 - Fall back to the **BlazeMeter REST API v4** only to fill a genuine MCP gap, and when you do,
   **say so and why** in the skill. Reason from the
   [v4 explorer](https://a.blazemeter.com/api/v4/explorer/), not from memory.
+- **GitHub integration is MCP-first too.** A skill that touches GitHub (PR comments, commit status)
+  uses the **GitHub MCP**, mirroring the BlazeMeter posture above; `gh`/REST is only a documented
+  fallback for a genuine gap. Generated CI artifacts (GitHub Actions YAML) are **secrets-only**:
+  they read the BlazeMeter key from `${{ secrets.BLAZEMETER_API_KEY }}` and contain only
+  `secrets.*` references — the plugin never embeds, logs, or echoes a token. See ADR-0016.
 
 ## 6. Credentials (never committed, never embedded)
 

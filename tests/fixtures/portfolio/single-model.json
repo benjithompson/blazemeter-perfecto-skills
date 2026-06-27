@@ -1,0 +1,34 @@
+{
+  "meta": {
+    "title": "Checkout Flow — Cross-Run Trend & Regression",
+    "subtitle": "3 runs over last 30 days",
+    "generated_at": "2026-06-27T09:00:00Z",
+    "window_start": "2026-05-28",
+    "window_end": "2026-06-27",
+    "context": {
+      "account": { "name": "Acme", "id": "10001" },
+      "workspace": { "name": "Web Performance", "id": "20002" },
+      "project": { "name": "Storefront", "id": "30003" },
+      "test": { "name": "Checkout Flow", "id": "t-checkout" }
+    }
+  },
+  "summary": { "verdict": "REGRESSED", "headline": "p95 up 34% over the window." },
+  "runs": [
+    { "execution_id": "ex-1", "timestamp": "2026-05-28T00:00", "label": "May 28", "status": "pass",
+      "kpis": { "avg_rt_ms": 210, "p90_ms": 380, "p95_ms": 480, "p99_ms": 900, "rps": 52, "error_rate_pct": 0.4, "concurrency": 100 } },
+    { "execution_id": "ex-2", "timestamp": "2026-06-12T00:00", "label": "Jun 12", "status": "pass",
+      "kpis": { "avg_rt_ms": 240, "p90_ms": 430, "p95_ms": 560, "p99_ms": 1050, "rps": 50, "error_rate_pct": 0.6, "concurrency": 100 } },
+    { "execution_id": "ex-3", "timestamp": "2026-06-27T00:00", "label": "Jun 27", "status": "fail",
+      "kpis": { "avg_rt_ms": 290, "p90_ms": 520, "p95_ms": 642, "p99_ms": 1300, "rps": 47, "error_rate_pct": 1.2, "concurrency": 100 } }
+  ],
+  "regressions": [
+    { "kpi": "p95 response time", "from_value": 480, "to_value": 642, "pct_change": 33.75,
+      "direction": "up", "severity": "critical", "run_id": "ex-3", "note": "steady climb" }
+  ],
+  "sla": { "pass_count": 2, "fail_count": 1, "rules": [
+    { "label": "p95 under 600ms", "threshold": "> 600 ms", "pass_rate_pct": 66.7, "note": "breached on latest run" }
+  ] },
+  "endpoints": [
+    { "name": "/checkout", "p95_ms": 642, "error_rate_pct": 1.2, "trend": "degrading" }
+  ]
+}

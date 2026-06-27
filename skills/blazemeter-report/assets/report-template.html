@@ -69,6 +69,18 @@ tbody tr:hover { background: var(--brand-surface); }
 .status-pass { background: rgba(46,125,50,.12); color: var(--brand-good); }
 .status-fail { background: rgba(198,40,40,.12); color: var(--brand-bad); }
 .status-other { background: rgba(91,103,112,.14); color: var(--brand-muted); }
+/* Portfolio scorecard: per-test health + trend arrows (kind: "portfolio"). */
+.health-pill { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.health-healthy { background: rgba(46,125,50,.12); color: var(--brand-good); }
+.health-at-risk { background: rgba(237,108,2,.14); color: var(--brand-warn); }
+.health-critical { background: rgba(198,40,40,.12); color: var(--brand-bad); }
+.health-unknown { background: rgba(91,103,112,.14); color: var(--brand-muted); }
+.trend-arrow { font-variant-numeric: tabular-nums; }
+.trend-improving { color: var(--brand-good); }
+.trend-degrading { color: var(--brand-bad); }
+.trend-stable { color: var(--brand-muted); }
+.flag-yes { color: var(--brand-bad); font-weight: 600; }
+.flag-no { color: var(--brand-muted); }
 .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 @media (max-width: 760px) { .charts-grid { grid-template-columns: 1fr; } }
 .chart-card { background: var(--brand-bg); border: 1px solid var(--brand-border); border-radius: 10px; padding: 12px 12px 8px; margin: 0; }
@@ -125,20 +137,43 @@ tbody tr:hover { background: var(--brand-surface); }
   <h2>Executive Summary</h2>
   <div class="card" id="report-summary"></div>
 
-  <h2>Trends</h2>
-  <section id="report-charts" class="charts-grid"></section>
+  <!--
+    Two report kinds share this one template (ADR-0014: new report types are added at the
+    same data-model seam, not by forking the renderer). The model's `kind` selects which
+    section group renders: "single" (default/absent) → the cross-run trend & regression view
+    for ONE test; "portfolio" → the cross-test scorecard over MANY tests. The engine below
+    dispatches on `kind`, unhides the matching group, and leaves the other hidden.
+  -->
 
-  <h2>Run history</h2>
-  <div class="card" id="report-runs"></div>
+  <!-- kind: "single" (default) — one test, many runs over a window -->
+  <div id="report-single-sections">
+    <h2>Trends</h2>
+    <section id="report-charts" class="charts-grid"></section>
 
-  <h2>Regressions</h2>
-  <div class="card" id="report-regressions"></div>
+    <h2>Run history</h2>
+    <div class="card" id="report-runs"></div>
 
-  <h2>SLA / Failure-criteria compliance</h2>
-  <div class="card" id="report-sla"></div>
+    <h2>Regressions</h2>
+    <div class="card" id="report-regressions"></div>
 
-  <h2>Endpoint hot spots</h2>
-  <div class="card" id="report-endpoints"></div>
+    <h2>SLA / Failure-criteria compliance</h2>
+    <div class="card" id="report-sla"></div>
+
+    <h2>Endpoint hot spots</h2>
+    <div class="card" id="report-endpoints"></div>
+  </div>
+
+  <!-- kind: "portfolio" — many tests, scorecard over a window (default a quarter) -->
+  <div id="report-portfolio-sections" hidden>
+    <h2>Portfolio at a glance</h2>
+    <section id="report-portfolio-charts" class="charts-grid"></section>
+
+    <h2>Test scorecard</h2>
+    <div class="card" id="report-scorecard"></div>
+
+    <h2>Top incidents</h2>
+    <div class="card" id="report-incidents"></div>
+  </div>
 
   <footer class="report-footer">
     BlazeMeter (approximated) · self-contained report, generated offline · branding is approximated
@@ -272,6 +307,17 @@ tbody tr:hover { background: var(--brand-surface); }
       }
       host.appendChild(span);
     });
+    // Portfolio scope carries a test count instead of a single test ref.
+    var count = ctx.tests_count;
+    if (count != null) {
+      any = true;
+      var cspan = document.createElement("span");
+      var cb = document.createElement("b");
+      cb.textContent = "Tests";
+      cspan.appendChild(cb);
+      cspan.appendChild(document.createTextNode(" " + count + " in scope"));
+      host.appendChild(cspan);
+    }
     if (!any) host.appendChild(emptySpan("No context supplied."));
   }
 
@@ -642,19 +688,193 @@ tbody tr:hover { background: var(--brand-surface); }
     });
   }
 
+  // === PORTFOLIO report kind (kind: "portfolio") =============================
+  //
+  // A cross-test scorecard over MANY tests in a scope, over a window (default a
+  // quarter). Built from the SAME data-model seam and the SAME chart/table/number
+  // primitives as the single-test path above — no forked renderer. The model
+  // carries `tests[]` (per-test rows: health, SLA-compliance %, trend, regression
+  // flag) and `incidents[]`; the engine derives the charts from `tests[]`.
+
+  function healthPill(health) {
+    var h = (health || "").toLowerCase();
+    var cls = h === "healthy" ? "health-healthy"
+      : (h === "at-risk" || h === "at risk" || h === "warning") ? "health-at-risk"
+      : (h === "critical" || h === "failing") ? "health-critical"
+      : "health-unknown";
+    var span = document.createElement("span");
+    span.className = "health-pill " + cls;
+    span.textContent = health || "unknown";
+    return span;
+  }
+
+  function trendCell(td, trend) {
+    var t = (trend || "").toLowerCase();
+    var arrow = t === "improving" ? "▲" : t === "degrading" ? "▼" : t === "stable" ? "→" : "";
+    if (!arrow) { td.appendChild(mutedDash("—")); return; }
+    var span = document.createElement("span");
+    span.className = "trend-arrow trend-" + t;
+    span.textContent = arrow + " " + trend;
+    td.appendChild(span);
+  }
+
+  function flagCell(td, flagged, label) {
+    var span = document.createElement("span");
+    if (flagged) { span.className = "flag-yes"; span.textContent = label || "yes"; }
+    else { span.className = "flag-no"; span.textContent = "no"; }
+    td.appendChild(span);
+  }
+
+  // Per-test scorecard table: health, runs, SLA-compliance %, trend, regressed?, worst move.
+  function buildScorecard(model) {
+    var host = document.getElementById("report-scorecard");
+    var tests = model.tests || [];
+    if (!tests.length) { host.appendChild(emptySpan("No tests in this portfolio.")); return; }
+    var table = document.createElement("table");
+    table.innerHTML = "<thead><tr><th>Test</th><th>Health</th><th>Runs</th>" +
+      "<th>SLA pass %</th><th>Trend</th><th>Regressed?</th><th>Worst KPI move</th><th>Baseline</th></tr></thead>";
+    var tbody = document.createElement("tbody");
+    tests.forEach(function (t) {
+      var tr = document.createElement("tr");
+      var tdName = document.createElement("td");
+      if (t.id) tdName.title = "test " + t.id;
+      tdName.textContent = t.name || ("test " + (t.id || "?"));
+      tr.appendChild(tdName);
+      var tdHealth = document.createElement("td"); tdHealth.appendChild(healthPill(t.health)); tr.appendChild(tdHealth);
+      var tdRuns = document.createElement("td"); numCell(tdRuns, t.runs != null ? t.runs : null, 0); tr.appendChild(tdRuns);
+      var tdSla = document.createElement("td"); numCell(tdSla, t.sla_compliance_pct != null ? t.sla_compliance_pct : null, 1, "%"); tr.appendChild(tdSla);
+      var tdTrend = document.createElement("td"); trendCell(tdTrend, t.trend); tr.appendChild(tdTrend);
+      var tdReg = document.createElement("td"); flagCell(tdReg, !!t.regressed, "regressed"); tr.appendChild(tdReg);
+      var tdMove = document.createElement("td");
+      if (t.worst_kpi_move) tdMove.textContent = t.worst_kpi_move; else tdMove.appendChild(mutedDash("—"));
+      tr.appendChild(tdMove);
+      var tdBase = document.createElement("td");
+      if (t.baseline_source) tdBase.textContent = t.baseline_source; else tdBase.appendChild(mutedDash("—"));
+      tr.appendChild(tdBase);
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    host.appendChild(table);
+  }
+
+  // Ranked cross-test incidents (failures, regressions, error spikes, anomalies).
+  function buildIncidents(model) {
+    var host = document.getElementById("report-incidents");
+    var incidents = model.incidents || [];
+    if (!incidents.length) { host.appendChild(emptySpan("No incidents flagged.")); return; }
+    var ul = document.createElement("ul");
+    ul.className = "reg-list";
+    incidents.forEach(function (inc) {
+      var sev = (["info", "warning", "critical"].indexOf(inc.severity) >= 0) ? inc.severity : "info";
+      var li = document.createElement("li");
+      li.className = "reg-item";
+      var dot = document.createElement("span");
+      dot.className = "sev-dot sev-" + sev;
+      li.appendChild(dot);
+      var who = document.createElement("span");
+      who.className = "reg-kpi";
+      who.textContent = inc.test || (inc.kpi || "incident");
+      li.appendChild(who);
+      var detail = inc.detail || inc.note || "";
+      if (inc.kpi && inc.test) detail = (inc.kpi + (detail ? " — " + detail : ""));
+      if (detail) {
+        var d = document.createElement("span");
+        d.className = "muted";
+        d.textContent = " — " + detail;
+        li.appendChild(d);
+      }
+      if (inc.run_id) {
+        var r = document.createElement("span");
+        r.className = "muted";
+        r.textContent = " (run " + inc.run_id + ")";
+        li.appendChild(r);
+      }
+      ul.appendChild(li);
+    });
+    host.appendChild(ul);
+  }
+
+  // Portfolio charts derived from tests[]: SLA-compliance % per test, and a health
+  // distribution. Reuses the same bar primitive as the single-test path.
+  function buildPortfolioChartSpecs(model) {
+    var tests = model.tests || [];
+    if (!tests.length) return [];
+    var charts = [];
+
+    var slaBars = tests
+      .filter(function (t) { return t.sla_compliance_pct != null; })
+      .map(function (t) {
+        var pct = t.sla_compliance_pct;
+        var color = pct >= 95 ? BRAND.primary : (pct >= 80 ? BRAND.accent : BRAND.bad);
+        return { label: t.name || ("test " + (t.id || "?")), value: pct, color: color };
+      });
+    if (slaBars.length) {
+      charts.push({ id: "sla", type: "bar", title: "SLA compliance by test (%)", yLabel: "%", bars: slaBars });
+    }
+
+    var buckets = { healthy: 0, "at-risk": 0, critical: 0 };
+    tests.forEach(function (t) {
+      var h = (t.health || "").toLowerCase().replace(" ", "-");
+      if (h === "warning") h = "at-risk";
+      if (h === "failing") h = "critical";
+      if (buckets[h] != null) buckets[h] += 1;
+    });
+    var healthBars = [
+      { label: "healthy", value: buckets.healthy, color: BRAND.primary },
+      { label: "at-risk", value: buckets["at-risk"], color: BRAND.accent },
+      { label: "critical", value: buckets.critical, color: BRAND.bad },
+    ];
+    if (buckets.healthy + buckets["at-risk"] + buckets.critical > 0) {
+      charts.push({ id: "health", type: "bar", title: "Test health distribution", yLabel: "tests", bars: healthBars });
+    }
+
+    return charts;
+  }
+
+  function renderPortfolioCharts(charts) {
+    var host = document.getElementById("report-portfolio-charts");
+    if (!host) return;
+    charts.forEach(function (spec) {
+      try { host.appendChild(barChart(spec)); }
+      catch (err) { /* a bad spec must never blank the whole report */ }
+    });
+  }
+
   // --- orchestration ---------------------------------------------------------
 
-  function render() {
-    var model = window.REPORT_DATA || {};
-    if (!model.meta) model.meta = {};
-    buildHeader(model);
-    buildContext(model);
-    buildSummary(model);
+  function show(id, on) {
+    var n = document.getElementById(id);
+    if (n) { if (on) n.removeAttribute("hidden"); else n.setAttribute("hidden", "hidden"); }
+  }
+
+  function renderSingle(model) {
+    show("report-single-sections", true);
+    show("report-portfolio-sections", false);
     renderCharts(buildChartSpecs(model));
     buildRuns(model);
     buildRegressions(model);
     buildSla(model);
     buildEndpoints(model);
+  }
+
+  function renderPortfolio(model) {
+    show("report-single-sections", false);
+    show("report-portfolio-sections", true);
+    renderPortfolioCharts(buildPortfolioChartSpecs(model));
+    buildScorecard(model);
+    buildIncidents(model);
+  }
+
+  function render() {
+    var model = window.REPORT_DATA || {};
+    if (!model.meta) model.meta = {};
+    // Header, context and the executive summary are shared by both report kinds.
+    buildHeader(model);
+    buildContext(model);
+    buildSummary(model);
+    // Dispatch on the data-model discriminator (the report-type seam, ADR-0014).
+    if ((model.kind || "single") === "portfolio") renderPortfolio(model);
+    else renderSingle(model);
   }
 
   if (document.readyState === "loading") {
