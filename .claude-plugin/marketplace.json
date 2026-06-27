@@ -9,7 +9,7 @@
       "name": "blazemeter-perfecto",
       "source": ".",
       "description": "BlazeMeter performance expert-workflow skills: run, analyze, compare, triage, and report on tests. Reuses your BlazeMeter MCP credentials.",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "license": "Apache-2.0"
     }
   ]
