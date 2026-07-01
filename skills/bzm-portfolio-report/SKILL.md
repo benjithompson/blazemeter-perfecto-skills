@@ -3,19 +3,19 @@ name: bzm-portfolio-report
 description: Generate ONE branded, self-contained HTML scorecard across MANY BlazeMeter tests in a workspace or project over a window (default a quarter) — per-test health, SLA-compliance %, trend arrows, and regression-vs-own-baseline flags, plus ranked incidents. Use when asked for a shareable/stakeholder portfolio report, a quarterly or release scorecard across a whole suite, an executive cross-test rollup, or a "how is the whole portfolio doing?" HTML you can email.
 ---
 
-Produce the **Portfolio Report**: a single branded, self-contained HTML scorecard that rolls up **every test in a scope** (a workspace or project) over a window (default a quarter) — each test's health, SLA-compliance %, trend, and whether it regressed against **its own baseline**, plus a ranked cross-test incident list. It is the **shareable HTML rendering** of the same cross-test view `bzm-daily-digest` produces in markdown: reach for the digest when you want a scannable standup artifact in the terminal, and for this skill when you want a stakeholder-facing, emailable HTML scorecard. Where `bzm-report` trends **one** test across its runs, this skill is its **portfolio sibling** — the same engine, the same brand, one row per test instead of one row per run.
+Produce the **Portfolio Report**: a single branded, self-contained HTML scorecard that rolls up **every test in a scope** (a workspace or project) over a window (default a quarter) — each test's health, SLA-compliance %, trend, and whether it regressed against **its own baseline**, plus a ranked cross-test incident list. It is the **shareable HTML rendering** of the same cross-test view `bzm-daily-digest` produces in markdown: reach for the digest when you want a scannable standup artifact in the terminal, and for this skill when you want a stakeholder-facing, emailable HTML scorecard. Where `bzm-report` trends **one** test across its runs, this skill is its **portfolio sibling** — the same template, the same brand, one row per test instead of one row per run.
 
-This skill **retrieves and normalizes** cross-test data, then fills the same shipped HTML template `bzm-report` uses (`skills/bzm-report/assets/report-template.html`). New report types are added at the **same data-model seam**, not by forking the renderer: you build a **portfolio** Report data model (JSON with `kind: "portfolio"`) and drop it into the single `{{REPORT_DATA_JSON}}` token; the template's baked-in CSS, vendored client-side charts, and approximated-BlazeMeter branding own the layout. The model's `kind` selects the portfolio section group (scorecard, incidents, portfolio charts). No local interpreter is involved: the render is a token replacement plus a file write, so it runs identically across the CLI, VS Code, and the desktop app.
+**Division of labor (important):** the MCP is used for the *control plane* — resolving the account and scope interactively, the AI-consent gate, and any after-report drill-in on a single run. The *bulk data pull* (every test's executions, every run's reports, every baseline comparison) is **never** done by chaining MCP calls — at a quarter's depth across a whole suite that is thousands of payloads. It is handed off to the deterministic engine at `${CLAUDE_PLUGIN_ROOT}/shared/scripts/bzm_fetch.py`, which sweeps the BlazeMeter API directly, does all the arithmetic (window filtering, baseline resolution, KPI deltas, normalization), and returns one compact pre-aggregated JSON. You read only that JSON, map it into the portfolio Report data model, and fill the shipped HTML template — the render is a token replacement plus a file write, no local interpreter.
 
-## Step 0 — Resolve and confirm the *scope* (account → workspace → project), then enumerate its tests
+## Step 0 — Resolve the account, choose the rollup scope, then census the tests
 
-This is the **cross-test** variant of Context Resolution. A portfolio report operates over **many tests at once**, so Step 0 resolves down to a **scope** (a workspace, or a project within it) and then **enumerates the tests in that scope** — it does **not** narrow to a single test. Every don't-assume guarantee of single-test resolution still applies; only the final level changes. **Don't assume:** the user may belong to multiple accounts, each with multiple workspaces/projects, names collide across them, and the `blazemeter_user read` default is a suggestion to confirm, never a silent choice.
+This is the **cross-test** variant of Context Resolution. A portfolio report operates over **many tests at once**, so it resolves down to a **scope** (a workspace, or a project within it) — it does **not** narrow to a single test. Every don't-assume guarantee of single-test resolution still applies; only the final level changes. **Don't assume:** the user may belong to multiple accounts, each with multiple workspaces/projects, names collide across them, and the `blazemeter_user read` default is a suggestion to confirm, never a silent choice.
 
-### Step 0a — Resolve account → workspace → project (same tiered pick rule at each level)
+### Step 0a — Resolve account → workspace (→ project) with the tiered pick rule
 
-Apply the uniform tiered pick rule at **each** level — account, then workspace, then project:
+Apply the uniform tiered pick rule at **each** level you must resolve:
 
-- Start from the `blazemeter_user read` default, but **don't assume it's unambiguous — enumerate the level (next bullet) to see how many options exist**: exactly one → **display** it and proceed; more than one → present the numbered pick and **stop** for the user's choice (never silently take the default).
+- Start from the `blazemeter_user read` default, but **don't assume it's unambiguous — enumerate the level (next bullet) to see how many options exist**: exactly one → **display** it and proceed; more than one → present the pick and **stop** for the user's choice (never silently take the default).
 - To enumerate options, list one page (`blazemeter_account list` / `blazemeter_workspaces list` / `blazemeter_project list`, `limit: 50`).
   - **Fits a choice list** (small set — the first page is *not* full) → present an **interactive choice list**, every entry showing name + id (default marked), the user clicks one; if there are more options than the choice widget holds, fall back to a **numbered text list** with ids (e.g. `1. Acme (account 12345)`).
   - **Too big / paginated** (the first page comes back full → more pages exist, e.g. >50) → **don't dump it**; ask the user to **name, paste an id, or filter**. A pasted **id short-circuits** any level via a direct `read`; a **name** you resolve by paging and matching.
@@ -27,26 +27,33 @@ Apply the uniform tiered pick rule at **each** level — account, then workspace
 The portfolio rolls up over **one scope**:
 
 - **Project** (default) — roll up the tests in the confirmed project.
-- **Workspace** — if the user asks for "the whole workspace", roll up across **all projects** in the workspace (enumerate projects via `blazemeter_project list`, then enumerate each project's tests).
+- **Workspace** — if the user asks for "the whole workspace", roll up across **all projects** in the workspace. No project pick is needed in that case.
 
-Stop at that level — **do not** descend to a single test.
+Stop at that level — **do not** descend to a single test, and resolve only the levels the chosen scope needs.
 
 ### Step 0c — AI Consent gate
 
-Check the resolved **account's** AI-consent state via `blazemeter_account read`. If the account has **not** consented, **stop with a clear message** — e.g. `Account Acme (12345) has not enabled AI consent` — before enumerating or fetching anything.
+Check the resolved **account's** AI-consent state via `blazemeter_account read`. If the account has **not** consented, **stop with a clear message** — e.g. `Account Acme (12345) has not enabled AI consent` — before invoking the engine or fetching anything. (The consent gate lives here, in the MCP step, on purpose — it must pass **before** any bulk pull runs.)
 
-### Step 0d — Enumerate the tests in scope
+### Step 0d — Census the scope with `plan` (the practicality checkpoint)
 
-Page `blazemeter_tests list { project_id: <id>, limit: 50, offset: 0 }` (stepping `offset` by 50) **to completion** — enumeration is the point here, so a full first page is **not** a reason to ask the user to name one test; keep paging and operate over the whole set. For a workspace-scope report, do this for each project. Capture each test's `test_id`, name, and its `failure_criteria` (`failure_criteria.rules[]` + `failure_criteria.meta.*` labels — keep these for SLA compliance).
+Do **not** enumerate tests by paging MCP lists — run the engine's fast census instead. It counts projects/tests using one cheap request per level and prints a small JSON to stdout:
 
-If the scope is **so large that enumerating is impractical** (e.g. hundreds of tests across a sprawling workspace), say so and ask the user to **narrow to a specific project** — never silently truncate to "the first page".
+```bash
+python ${CLAUDE_PLUGIN_ROOT}/shared/scripts/bzm_fetch.py plan --project-id <id>
+# or:  --workspace-id <id>     (exactly one scope flag)
+```
 
-### Step 0e — Display the resolved scope and the test count, then continue
+The engine reads the **same credentials the MCP uses** from the environment — `API_KEY_ID` + `API_KEY_SECRET`, or `BLAZEMETER_API_KEY` (a path to a JSON key file). Never pass keys on the command line. If it exits with a credentials error, show the user which variables to set and stop.
+
+**Practicality guard:** show the census to the user. A quarter-deep sweep over a large scope (many projects, hundreds of tests) is heavy on wall-clock even for the engine — say how many projects/tests are in play and offer to **narrow to a specific project** (or shorten the window) or proceed with the full sweep. Never silently truncate the scope.
+
+### Step 0e — Display the resolved scope and the census, then continue
 
 Display the cross-test context block before acting, so the run is auditable:
 
 ```
-Scope:      Project <project name>  (ID: <project_id>)        ← or "Workspace <name>" for a workspace report
+Scope:      Project <project name>  (ID: <project_id>)        ← or "Workspace <name> (ID)" for a workspace report
 Workspace:  <workspace name>  (ID: <workspace_id>)
 Account:    <account name>  (ID: <account_id>)
 Window:     <resolved window, e.g. Q2 2026: 2026-04-01 → 2026-06-30>
@@ -57,85 +64,45 @@ Carry this resolved scope forward as **conversational memory** for later skills 
 
 ## Step 1 — Resolve the window
 
-Default to the **last quarter** (the most recent full calendar quarter, or the trailing ~90 days) ending now. Let the user override in natural language — "this quarter", "last 90 days", "since the 1.4 release", or an explicit date range. Compute a concrete `[window_start, window_end]` pair and **display it** (in Step 0e's block). Everything downstream filters runs by `start_time`/`end_time` falling inside this window.
+Default to the **last quarter** (the most recent full calendar quarter, or the trailing ~90 days) ending now. Let the user override in natural language — "this quarter", "last 90 days", "since the 1.4 release", or an explicit date range. Compute a concrete `[from, to]` timestamp pair and **display it** (in Step 0e's block). The engine filters runs by overlap with this window.
 
-## Step 2 — For each test, list and select the runs in the window
+## Step 2 — Run the sweep (one engine invocation, the sole data source)
 
-For every test enumerated in Step 0d, list its executions and keep only those that **overlap the window** — these are **independent per test, so fetch in parallel**:
+One engine invocation does the whole bulk pull and all the deterministic judgment — listing each test's executions, keeping runs that overlap the window, fetching each kept run's reports, resolving each test's baseline, and computing the KPI deltas:
 
-```
-blazemeter_execution list  { test_id: <id>, limit: 50, offset: 0 }
-```
-
-- **Pagination:** `list` maxes at 50 per call; executions come back newest-first. Page by `offset` only until you pass the start of the window (once a page's runs are all older than `window_start`, stop paging that test). Page **further back than the window** when you need a baseline that predates it (Step 4).
-- Keep **finished, evaluable** runs: `ended != null`. **Skip** `aborted` / `error` / `noData` / `TERMINATED` runs — they have incomplete data that distorts the scorecard; **count** them separately as "skipped (partial)" so the report is honest about coverage, but don't fold their KPIs in.
-- A test with **no run in the window** is **idle** — it has no scorecard row of live data; note it in the coverage footer (Step 5) rather than inventing values.
-
-## Step 3 — Retrieve each kept run's KPIs
-
-For each kept run across all tests, fetch — **independent per run and across tests, so fan them out in parallel**:
-
-```
-blazemeter_execution read              { execution_id: <id> }   # execution_status + ended timestamp
-blazemeter_execution read_all_reports  { execution_id: <id> }   # summary + errors + request_stats
+```bash
+python ${CLAUDE_PLUGIN_ROOT}/shared/scripts/bzm_fetch.py sweep \
+  --project-id <id> \                           # or --workspace-id (exactly one)
+  --from 2026-04-01T00:00:00Z --to 2026-07-01T00:00:00Z \
+  --baseline-file .blazemeter/baseline.json \   # only if the user's repo has one
+  --pins <scratch>/pins.json \                  # only if the user pinned baselines this conversation
+  --out <scratch>/portfolio.json
 ```
 
-Map the **summary** report's `overall_metrics` into KPI fields (the field names differ — map explicitly, same mapping `bzm-report` uses):
+- **`--baseline-file`** — pass the user's committed `.blazemeter/baseline.json` when the repo has one; its entries (a flat `{test_id: execution_id}` map) pin those tests' baselines.
+- **`--pins`** — if the user pinned a baseline for specific tests earlier **in this conversation**, write those as a small JSON map `{"<test_id>": "<execution_id>"}` to a scratch file and pass it. Pins outrank the committed file. Omit otherwise.
+- Baseline precedence per test is applied inside the engine: **conversational pin → committed file → last passing run** (from the test's own history, which may legitimately predate the window). A test with no passing run gets `"source": "none"` — no baseline is invented.
+- Stdout is a **five-line summary** (tests swept, failures/regressions, fetch coverage, output path) — show it to the user as progress. The full result is the JSON at `--out`, and that file is the **sole data source** for every number in the report.
+- **Exit codes:** `0` success; `2` usage/credentials (tell the user what to set/fix); `3` scope-level failure **or** too many fetch failures (default threshold 20%, tune with `--max-failure-rate`). On `3` the JSON may still exist — its `coverage` block says exactly what's missing; label the report **partial**, never complete.
 
-| Report field (`overall_metrics`) | KPI |
-| --- | --- |
-| `average_response_time_ms` | `avg_rt_ms` |
-| `percentile_95_ms` | `p95_ms` |
-| `percentile_99_ms` | `p99_ms` |
-| `average_throughput_per_second` | `rps` |
-| `error_rate_percent` | `error_rate_pct` |
-| `max_concurrent_users` | `concurrency` |
+## Step 3 — Read the sweep JSON and derive each test's scorecard row
 
-Take each run's `status` from `blazemeter_execution read` → `execution_status`.
+Read `--out`. It is compact — one entry per test that ran (idle tests are only counted). Everything numeric is already computed; **do not recompute or second-guess the arithmetic**. Per test you get: run counts (`runs_in_window`, `kpi_runs`, `passed`/`failed`, `skipped_partial`, `inconclusive`, `still_running`), `baseline` (`source`: `pin | file | last-passing | none`, and the execution id), `candidate_execution_id`, `deltas` vs baseline (avg/p95/p99/throughput/error-rate, each with a `pct` and an `adverse` flag; throughput judged per-virtual-user when the load config changed, flagged `normalized_per_vu`), `worst_kpi_move`, `regressed`, `notes`, `anomaly_status`, and `incident_candidates`.
 
-## Step 4 — Per test: SLA compliance, trend, and regression vs its OWN baseline
+Derive the portfolio columns from those fields — simple arithmetic on already-computed numbers, nothing re-fetched:
 
-For **each test** in scope, compute the row the scorecard needs:
+- **SLA compliance %** — `passed / kpi_runs * 100` (i.e. `passed / (passed + failed)`). When `kpi_runs` is 0 (only partial/inconclusive runs in the window), there is no compliance number — render it as `—` with a note, never `0%`.
+- **Trend arrow** — from `deltas` (candidate vs the test's own baseline): any `adverse: true` delta → `degrading`; no adverse move but a primary KPI (p95, error rate, throughput) improved by ≥10% in the good direction → `improving`; otherwise `stable`. No baseline or no deltas → no arrow (`—`); don't invent a direction.
+- **Regression flag** — `regressed` and `worst_kpi_move` verbatim; format the move as a short string, e.g. `p95 +34%` (or `error rate +2.1 pts` when the delta carries `points` because the baseline was clean).
+- **Baseline source** — map `pin → pinned`, `file → committed file`, `last-passing → last-passing`, `none → no baseline` for display.
+- **Health** — `critical` if the test had any failing run in the window (`failed > 0`) or its SLA compliance is below ~60%; `at-risk` if `regressed` while still green, or compliance is below ~90%; else `healthy`.
+- **Incidents** — rank the union of all tests' `incident_candidates` by severity: outright **failures** first, then **large regressions** vs baseline (bigger move = higher), then **error spikes** (`error_spike` past 1%, severe past 5%; `endpoint_error_spike` near-100% on real traffic), then **anomalies** (weight a KPI/label recurring across multiple tests as systemic; a lone one-off is likely noise). Name the test, run id, metric, and baseline-vs-now numbers so each is actionable.
 
-### 4a. SLA compliance %
+Treat `statistics_unavailable` as **insufficient data, not a finding** (never an incident, never "clean"); `inconclusive` runs are inconclusive, not green. A test whose notes include `baseline_is_only_run` gets "baseline run, no prior to compare", not a 0% move.
 
-Count the test's in-window runs whose `execution_status` is `pass` vs `fail`; `sla_compliance_pct = pass / (pass + fail) * 100`. Describe the rules (if the user drills in) from the **test's `failure_criteria.meta.*`** labels — **never raw kpi ids or op codes**.
+## Step 4 — Assemble the portfolio Report data model (JSON)
 
-### 4b. Trend
-
-From the test's in-window run series (ordered oldest → newest), classify the primary KPI direction: `improving` (p95/error trending down), `degrading` (trending up), or `stable`. The series itself is the trend — no extra modeling.
-
-### 4c. Regression vs the test's own baseline (reuse `bzm_baseline.py` — don't re-implement)
-
-A run can pass its criteria yet be **meaningfully slower than the test's golden baseline** — exactly what a portfolio scorecard exists to surface. Resolve **each test's own baseline** and compare its most significant in-window run against it. **Reuse the shared script and concept from `bzm-baseline` — do not re-implement baseline logic.** Resolution order, per test:
-
-1. **Conversational pin** — if the user pinned a baseline `execution_id` for this test earlier in the conversation, use it.
-2. **Committed CI file** — if the repo has `.blazemeter/baseline.json`, read its entry for this `test_id`:
-
-   ```
-   python ${CLAUDE_PLUGIN_ROOT}/shared/scripts/bzm_baseline.py resolve \
-     --file .blazemeter/baseline.json --test-id <test_id>
-   ```
-
-   It prints `{"source": "pinned", "execution_id": "<id>"}` when present. A **malformed** file exits non-zero — surface that for the test, don't silently swallow it.
-3. **Last-passing run** — with no pin and no file entry, default to the test's most recent passing run (it may predate the window — page history back as needed). Build a JSON list of the test's executions (`id`, `status`, `end_time`) and let the script choose:
-
-   ```
-   python ${CLAUDE_PLUGIN_ROOT}/shared/scripts/bzm_baseline.py last-passing \
-     --executions <executions.json>
-   ```
-
-   If it returns `null`, the test has **no passing run to baseline against** — set `baseline_source` to `"no baseline"`, leave `regressed` based on absolute pass/fail only, and don't invent a reference.
-
-Read the resolved baseline's KPIs once per test (`blazemeter_execution read_all_reports { execution_id: <baseline_id> }`, the **summary** sub-report). A test is **`regressed: true`** if any tracked KPI (avg/p95/p99 RT, error rate — and RPS inverted, *lower* is worse) moved **≥ 10%** in the worse direction vs its baseline, **or** any in-window run failed its criteria. Record the **worst KPI move** (the single largest adverse % change, named — e.g. `p95 +34%`). **Normalize for load-config drift:** if a run's concurrency differs from the baseline, raw RPS isn't comparable — normalize to RPS-per-virtual-user before flagging a throughput regression, and note it. Don't compare a run to itself: if a test's only in-window run *is* its resolved baseline, mark it "baseline run, no prior to compare".
-
-### 4d. Health
-
-Derive each test's **health** from 4a–4c: `critical` (failed criteria in-window or breaching SLA on most runs), `at-risk` (regressed vs baseline but still green, or SLA compliance below a comfortable bar), else `healthy`.
-
-## Step 5 — Assemble the portfolio Report data model (JSON)
-
-Build a single JSON object with **`kind: "portfolio"`** matching the portfolio data model below (`meta` / `summary` / `tests` / `incidents`). **Supply `generated_at` yourself** (current time, ISO 8601) — the template never reads the clock, so the render is deterministic. Put **no credentials** anywhere in the model.
+Build a single JSON object with **`kind: "portfolio"`** matching the portfolio data model below (`meta` / `summary` / `tests` / `incidents`), filling every row from Step 3's derivations. **Supply `generated_at` yourself** (current time, ISO 8601) — the template never reads the clock, so the render is deterministic. Put **no credentials** anywhere in the model.
 
 ```json
 {
@@ -170,17 +137,24 @@ Build a single JSON object with **`kind: "portfolio"`** matching the portfolio d
 }
 ```
 
-Leave `tests` rows for **idle** tests out of the array (note them in the coverage footer instead); omit `incidents` (empty array) when there are none — the template renders a tidy "none" state. Rank `incidents` by severity (outright failures → large regressions → error spikes), naming the test, run, metric, and baseline-vs-now numbers so each is actionable. Keep the JSON ready to inject in Step 6.
+Per-row sourcing: `name`/`id` from the sweep entry's `test_name`/`test_id`; `runs` = `kpi_runs` (evaluable runs only — report `skipped_partial` in the coverage footer, don't fold it in); the remaining columns from Step 3. **Idle tests** (counted in `idle_tests`, absent from `tests[]` in the sweep JSON) get **no scorecard row** — note the count in the coverage footer instead. Omit `incidents` (empty array) when there are none — the template renders a tidy "none" state. Your contribution is the `summary` block: verdict, headline, and a short expert narrative grounded in the sweep's numbers. Keep the JSON ready to inject in Step 5.
 
-## Step 6 — Emit the branded Portfolio Report (template fill, no interpreter)
+## Step 5 — Emit the branded Portfolio Report (template fill, no interpreter)
 
-The Portfolio Report is the **same shipped HTML template** as `bzm-report`, rendering itself from the data model in the browser — there is **no Python step and no local interpreter**. Produce the file with three deterministic actions:
+The Portfolio Report is the **same shipped HTML template** as `bzm-report`, rendering itself from the data model in the browser — there is **no Python step and no local interpreter**. New report types plug in at the **data-model seam**, not by forking the renderer: the model's `kind` selects the portfolio section group (scope context, executive summary, portfolio charts, the per-test scorecard, ranked incidents). Produce the file with three deterministic actions:
 
-1. **Read the template** at `${CLAUDE_PLUGIN_ROOT}/skills/bzm-report/assets/report-template.html`. It bakes in the CSS, the approximated-BlazeMeter brand vars, and the vendored client-side JS that dispatches on the model's `kind` and builds the portfolio sections (scope context, executive summary, portfolio charts, the per-test scorecard, and ranked incidents).
-2. **Serialize your Step 5 data model to JSON** and **replace the single token `{{REPORT_DATA_JSON}}`** with it. The token sits inside `<script>window.REPORT_DATA = {{REPORT_DATA_JSON}};</script>`, so before substituting, **HTML-escape every `</` in the JSON to `<\/`** — that guarantees a string value (e.g. a test name like `Catalog </checkout>`) can never close the `<script>` tag early. Substitute the token literally; do not otherwise reformat the template.
+1. **Read the template** at `${CLAUDE_PLUGIN_ROOT}/skills/bzm-report/assets/report-template.html`. It bakes in the CSS, the approximated-BlazeMeter brand vars, and the vendored client-side JS that dispatches on the model's `kind` and builds the portfolio sections.
+2. **Serialize your Step 4 data model to JSON** and **replace the single token `{{REPORT_DATA_JSON}}`** with it. The token sits inside `<script>window.REPORT_DATA = {{REPORT_DATA_JSON}};</script>`, so before substituting, **HTML-escape every `</` in the JSON to `<\/`** — that guarantees a string value (e.g. a test name like `Catalog </checkout>`) can never close the `<script>` tag early. Substitute the token literally; do not otherwise reformat the template.
 3. **Write the result** as a `.html` file (default `./bzm-reports/`, filename a slug of the scope name + `generated_at`). Use the `Write` tool — no shell, no `python`.
 
 The output is fully self-contained (offline, no CDN — safe to email): the same single token is the only thing that varies run-to-run, so layout and branding stay deterministic. **Branding lives in the template** (the CSS `:root` vars + inline logo SVG) — never hardcode brand values in the data model; re-branding is a template edit, not a model change.
+
+## Step 6 — Handle the edge cases gracefully
+
+- **Empty window (nothing ran):** `tests_ran: 0` → **do not** fabricate a scorecard or render an empty HTML shell. Confirm the scope and window, state plainly that **nothing ran in this window**, note how many tests are in scope, and offer to widen the window.
+- **Partial coverage:** surface the sweep's `coverage` block honestly — skipped partial runs, failed fetches (with counts), anomaly stats unavailable — in both the report narrative and the summary you give the user. Never present a partial sweep as complete.
+- **No baseline for a test:** its row reads `no baseline`; judge it on absolute pass/fail only.
+- **Drill-ins stay interactive:** when the user asks about one incident ("what happened in run 9101?"), that is a *single-run* question — answer it with the MCP (`blazemeter_execution read`, `read_all_reports`, `read_anomalies_stats` for **that** execution id, or hand off to `bzm-triage-failure`). To describe a test's SLA rules in prose, `blazemeter_tests read` gives its `failure_criteria.meta.*` labels. Don't re-run the sweep for a drill-in.
 
 ## Output template
 
@@ -188,7 +162,7 @@ After rendering, tell the user:
 
 ```
 ## BlazeMeter Portfolio Report: <scope name>
-**Window:** <start> – <end>   |   **Tests in scope:** N (<idle> idle, <skipped> partial skipped)
+**Window:** <start> – <end>   |   **Tests in scope:** N (<idle> idle, <skipped> partial runs skipped)
 **Verdict:** <STABLE / REGRESSED / AT-RISK / CRITICAL>
 **Report file:** <path to the HTML>
 
@@ -197,22 +171,28 @@ After rendering, tell the user:
 - <portfolio SLA compliance: e.g. 4/5 tests ≥ 95%>
 - <top incident, with numbers>
 
+### Coverage notes
+- Fetch coverage: <ok>/<attempted> (<failed> failed)   ← only when failures > 0
+- Tests with no baseline: <N> — judged on absolute pass/fail only
+
 Open the HTML file to see the full branded scorecard (per-test health, SLA-compliance %, trend arrows, regression flags, portfolio charts, ranked incidents).
 ```
 
 ## Gotchas
 
-- **Cross-test scope, not one test.** Step 0 resolves to a **scope** and **enumerates** its tests — a full first page of `blazemeter_tests list` means "keep paging", **not** "ask the user to name one test". Only an impractically large scope warrants asking the user to narrow to a project.
-- **Same engine, new report type at the data-model seam.** Set `kind: "portfolio"` — that is what selects the scorecard/incidents/portfolio-charts section group in the one shipped template. Don't fork the renderer or hand-write report HTML; fill `bzm-report`'s `assets/report-template.html`. (Omit `kind` and you get the single-test layout.)
-- **Per-test baseline via the shared script.** Resolve each test's baseline **per test** (pinned → committed `.blazemeter/baseline.json` → last-passing) via `${CLAUDE_PLUGIN_ROOT}/shared/scripts/bzm_baseline.py` — don't re-implement it, and don't share one baseline across tests. `last-passing` → `null` means "no baseline": set `baseline_source: "no baseline"` and fall back to absolute pass/fail. A baseline may predate the window — page history further back. A malformed committed file exits non-zero — surface it.
-- **Field-name mapping is exact.** `average_response_time_ms` / `average_throughput_per_second` / `error_rate_percent` / `percentile_9X_ms` / `max_concurrent_users` → `avg_rt_ms` / `rps` / `error_rate_pct` / `p9X_ms` / `concurrency`. A mis-key silently drops a KPI.
+- **Never do the bulk pull over MCP.** Chaining `blazemeter_*` list/read calls per test and per execution burns enormous time and tokens at portfolio scale — a quarter across a suite is thousands of payloads — and is exactly what the engine exists for. MCP is for Step 0's interactive picks, the consent gate, and single-run drill-ins afterward — nothing in between.
+- **Census, don't enumerate by hand.** Step 0 resolves the scope and runs `plan` for the census — no paging `blazemeter_tests list` to count tests. A big census is a reason to *offer narrowing* to a project (or a shorter window), never to silently truncate.
+- **Consent before sweep.** The AI-consent check (Step 0c) must pass before any `plan`/`sweep` invocation — the gate lives in the MCP layer, and the engine assumes it already happened.
+- **Credentials are environment-only.** The engine reads `API_KEY_ID`/`API_KEY_SECRET` or `BLAZEMETER_API_KEY` (a key-file path) — the same variables the MCP uses. Never put a key on the command line, in the data model, or in the generated HTML (it's meant to be emailed — keep it secret-free).
+- **Trust the engine's arithmetic.** Deltas, normalization, baseline choice, and status buckets are computed deterministically. Your derivations on top (SLA %, trend arrow, health) are simple mappings of those numbers — if a number looks wrong, say so and show it; don't silently recompute or re-fetch.
+- **Deep windows can hit the history cap.** For each test the engine pages executions newest-first (50 per page, up to 20 pages ≈ 1,000 runs) and stops once a page predates the window. A test that ran more than ~1,000 times since the window started can have its **oldest in-window runs truncated** — a real possibility with quarter-long windows on hyperactive CI tests. If a very active test's `runs_in_window` looks suspiciously flat, say the history may be capped and offer a shorter window for that portfolio.
+- **The engine already excludes partial runs.** Aborted/errored runs are counted (`skipped_partial`) but their KPIs never fold into the scorecard; `runs` in a scorecard row means **evaluable** (`kpi_runs`) runs. Report the skipped count in the coverage footer — keep the report honest.
+- **`statistics_unavailable` is not a finding.** It means anomaly stats couldn't be read — insufficient data, never "anomalies detected" and never a clean bill.
+- **Don't compare a run to itself.** Last-passing resolution excludes the candidate, so a still-green regression is detectable whenever any prior pass exists. `baseline_is_only_run` in a test's notes means a *pinned* baseline points at the candidate itself — the row reads "baseline run, no prior to compare", not a 0% move.
+- **No SLA number without evaluable runs.** `kpi_runs: 0` (only partial/inconclusive/running runs in the window) means SLA compliance is `—`, not `0%` — a test must never look breaching because its only runs were aborted.
+- **Same template, new report type at the data-model seam.** Set `kind: "portfolio"` — that selects the scorecard/incidents/portfolio-charts section group in the one shipped template. Don't fork the renderer or hand-write report HTML. (Omit `kind` and you get the single-test layout.)
 - **`generated_at` is supplied, not read.** The template never reads the clock (deterministic render). Provide the current timestamp; `meta.title` and `meta.generated_at` are required.
-- **Completion = `ended != null`.** Skip `aborted` / `error` / `noData` / `TERMINATED` runs; count them as "skipped (partial)" in the footer, never fold their KPIs in. Idle tests (no in-window run) get no scorecard row — note them in coverage, don't invent values.
-- **Load-config drift.** If concurrency varies vs the baseline, raw RPS isn't apples-to-apples — normalize to RPS-per-VU before flagging a throughput regression, and say you did.
-- **Pagination.** Every `list` action maxes at 50 — page by `offset`. Per-test execution lists and per-execution reads are **independent — parallelize them**; a serial sweep over a whole workspace is needlessly slow.
-- **Failure-criteria labels come from the test, not the execution.** Describe SLA rules with the test object's `failure_criteria.meta.*` labels; the execution only carries the overall `execution_status` (no per-criterion per-run result) — attribute a failing run by comparing its summary KPIs to the rule's threshold.
-- **No credentials in the model or output.** The data model holds data + narrative only; Platform Credentials never belong in it (the template only ever sees what you inject). The generated HTML is shareable/emailable — keep it secret-free.
 - **Escape `</` before substituting.** The model is injected into a `<script>` tag, so any `</` inside a string value (a test name, a narrative line) must become `<\/` first — otherwise it can close the tag early. This is the only transform the JSON needs.
+- **Failure-criteria labels come from the test, not the execution.** At portfolio altitude, lead with pass/fail counts and deltas; reach into `blazemeter_tests read` (`failure_criteria.meta.*` labels — never raw kpi ids or op codes) only when explaining *why* a specific run failed during a drill-in.
 - **Companion to the digest.** `bzm-daily-digest` produces the same cross-test rollup as **markdown/terminal**; this skill is its **shareable HTML** form. Use the digest for a standup; use this for a stakeholder-facing scorecard.
-- **MCP-first.** Every retrieval is a `blazemeter_*` MCP action; no REST v4 fallback is needed. Only a genuine MCP gap would justify a documented REST call.
-- **Never persist scope.** The resolved account/workspace/project is conversational memory only — never written to disk. The committed `.blazemeter/baseline.json` is the user's own repo state and a different thing.
+- **Never persist scope.** The resolved account/workspace/project is conversational memory only. The committed `.blazemeter/baseline.json` is the user's own repo state and a different thing. Scratch files (`pins.json`, `portfolio.json`) go in the session scratch directory, not the user's repo; only the final `.html` lands where the user asked.
