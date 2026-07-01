@@ -1,57 +1,63 @@
 ---
 name: bzm-daily-digest
-description: Sweep every BlazeMeter test that ran across a workspace or project in a time window (default last 24h) and produce ONE cross-test scorecard — per-test pass/fail, regression vs each test's own baseline, ranked incidents, and a prioritized "what needs your eyes today" list. Use when asked for a daily/standup digest, a morning rollup, an overnight summary, or a "what broke since yesterday?" view across many tests at once.
+description: Sweep every BlazeMeter test that ran across an account (or a chosen workspace/project) in a time window (default last 24h) and produce ONE cross-test scorecard — per-test pass/fail, regression vs each test's own baseline, ranked incidents, and a prioritized "what needs your eyes today" list. Use when asked for a daily/standup digest, a morning rollup, an overnight summary, or a "what broke since yesterday?" view across many tests at once.
 ---
 
-Produce the **daily digest**: one cross-test scorecard for an entire workspace or project over a window. Where `bzm-analyze-test` trends *one* test deeply and `bzm-triage-failure` diagnoses *one* run, this skill sweeps **every test that ran** in the window, judges each against **its own baseline** (not just absolute pass/fail), and rolls the whole portfolio up into a scoreboard, a ranked incident list, and a short "needs your eyes today" list. It is markdown/terminal-first — a scannable standup artifact, **not** a branded HTML report (reach for `bzm-report` when you want the shareable HTML).
+Produce the **daily digest**: one cross-test scorecard for a whole account — or a chosen workspace/project — over a window. Where `bzm-analyze-test` trends *one* test deeply and `bzm-triage-failure` diagnoses *one* run, this skill sweeps **every test that ran** in the window, judges each against **its own baseline** (not just absolute pass/fail), and rolls the whole portfolio up into a scoreboard, a ranked incident list, and a short "needs your eyes today" list. It is markdown/terminal-first — a scannable standup artifact, **not** a branded HTML report (reach for `bzm-report` when you want the shareable HTML).
 
-## Step 0 — Resolve and confirm the *scope* (account → workspace → project), then enumerate its tests
+## Step 0 — Resolve the account, ask the user the rollup scope, then enumerate its tests
 
-This is the **cross-test** Context Resolution step from `shared/conventions.md` §4.7. A digest operates over **many tests at once**, so Step 0 resolves down to a **scope** (a workspace, or a project within it) and then **enumerates the tests in that scope** — it does **not** narrow to a single test. Every don't-assume guarantee of §4 still applies; only the final level changes. **Don't assume:** the user may belong to multiple accounts, each with multiple workspaces/projects, names collide across them, and the `blazemeter_user read` default is a suggestion to confirm, never a silent choice.
+This is the **cross-test** variant of Context Resolution. A digest operates over **many tests at once**, so it resolves the **account**, then **asks the user how wide to roll up** — the **whole account** (every workspace → project → test), a **single workspace**, or a **single project** — and enumerates the tests in that chosen scope. It **never assumes** the breadth and never narrows to a single test. **Don't assume:** the user may belong to multiple accounts, names collide across them, and the `blazemeter_user read` default is a suggestion to confirm, never a silent choice.
 
-### Step 0a — Resolve account → workspace → project (same tiered pick rule at each level)
+### Step 0a — Resolve the account (tiered pick rule)
 
-Apply the uniform tiered pick rule (§4.2) at **each** level — account, then workspace, then project:
+Resolve **only the account** here — which workspaces/projects you enumerate depends on the scope the user picks in Step 0b. Apply the uniform tiered pick rule to the account:
 
-- Start from the `blazemeter_user read` default, but **don't assume it's unambiguous — enumerate the level (next bullet) to see how many options exist**: exactly one → **display** it and proceed; more than one → present the numbered pick and **stop** for the user's choice (never silently take the default).
-- To enumerate options, list one page (`blazemeter_account list` / `blazemeter_workspaces list` / `blazemeter_project list`, `limit: 50`).
-  - **Fits a choice list** (small set — the first page is *not* full) → present an **interactive choice list**, every entry showing name + id (default marked), the user clicks one; if there are more options than the choice widget holds, fall back to a **numbered text list** with ids (e.g. `1. Acme (account 12345)`).
-  - **Too big / paginated** (the first page comes back full → more pages exist, e.g. >50) → **don't dump it**; ask the user to **name, paste an id, or filter**. A pasted **id short-circuits** any level via a direct `read`; a **name** you resolve by paging and matching.
-- Always show the **id** next to each name so same-named entities are distinguishable.
-- **Name doesn't resolve cleanly (§4.3):** no match → say so, show what *is* available, stop; multiple matches → list each candidate with its **parent and id** and let the user pick; 403 → report the access gap, don't retry. **Never fall back to the default** at any level.
+- Start from the `blazemeter_user read` default account, but **don't assume it's unambiguous — enumerate to see how many accounts exist**: exactly one → **display** it and proceed; more than one → present the pick and **stop** for the user's choice (never silently take the default).
+- To enumerate, list one page (`blazemeter_account list`, `limit: 50`).
+  - **Fits a choice list** (the first page is *not* full) → present an **interactive choice list**, every entry showing name + id (default marked), the user clicks one; if there are more accounts than the choice widget holds, fall back to a **numbered text list** with ids.
+  - **Too big / paginated** (the first page comes back full → more pages exist) → **don't dump it**; ask the user to **name, paste an id, or filter**. A pasted **id short-circuits** via a direct `read`; a **name** you resolve by paging and matching.
+- Always show the **id** next to each name. **Name doesn't resolve cleanly:** no match → say so, show what *is* available, stop; multiple matches → list each with its id and let the user pick; 403 → report the access gap, don't retry. **Never fall back to the default.**
 
-### Step 0b — Choose the scope to roll up over
+### Step 0b — Ask the user the rollup scope (account / workspace / project)
 
-The digest rolls up over **one scope**:
+Once the account is confirmed, **ask the user how wide to roll up — never assume**. Offer three altitudes as a choice list:
 
-- **Project** (default) — roll up the tests in the confirmed project.
-- **Workspace** — if the user asks for "the whole workspace", roll up across **all projects** in the workspace (enumerate projects via `blazemeter_project list`, then enumerate each project's tests).
+- **Whole account** — sweep **every workspace → project → test** in the account (the true "analysis of the day" across everything).
+- **A single workspace** — roll up **all projects/tests** in one workspace. Resolve the workspace with the same tiered pick rule as Step 0a (choice list; **name / paste-id / filter** when the account has a large/paginated workspace list — e.g. >50).
+- **A single project** — roll up one project's tests. Resolve workspace → project with the same tiered pick rule.
 
-Stop at that level — **do not** descend to a single test.
+Offer **whole account** as the natural default for a "daily digest", but let the user choose — a workspace or project scope is equally valid. **Resolve only the levels the chosen scope needs** (account scope needs no workspace/project pick).
 
 ### Step 0c — AI Consent gate
 
 Check the resolved **account's** AI-consent state via `blazemeter_account read`. If the account has **not** consented, **stop with a clear message** — e.g. `Account Acme (12345) has not enabled AI consent` — before enumerating or fetching anything.
 
-### Step 0d — Enumerate the tests in scope
+### Step 0d — Enumerate the tests in the chosen scope
 
-Page `blazemeter_tests list { project_id: <id>, limit: 50, offset: 0 }` (stepping `offset` by 50) **to completion** — enumeration is the point here, so a full first page is **not** a reason to ask the user to name one test; keep paging and operate over the whole set. For a workspace-scope digest, do this for each project. Capture each test's `test_id` and name.
+Enumerate to completion over whatever scope was picked in 0b — a full first page is **not** a reason to ask the user to name one test; keep paging:
 
-If the scope is **so large that enumerating is impractical** (e.g. hundreds of tests across a sprawling workspace), say so and ask the user to **narrow to a specific project** — never silently truncate to "the first page".
+- **Whole account** → for **each workspace** in the account (page `blazemeter_workspaces list`), list its projects (`blazemeter_project list`), then each project's tests (`blazemeter_tests list`, `offset` by 50). Parallelize across workspaces/projects.
+- **Workspace** → each project in the workspace → its tests.
+- **Project** → `blazemeter_tests list { project_id: <id> }` to completion.
+
+Capture each test's `test_id`, name, **and its workspace/project** so an account-wide scoreboard can group by workspace.
+
+**Practicality guard:** a whole-account sweep of a **large account** (the first `blazemeter_workspaces list` page comes back full → >50 workspaces, or the test count runs into the hundreds) is heavy — **say so up front**, show how many workspaces/tests are in play, and offer to **narrow to specific workspaces/projects** or to proceed with the full sweep. Never silently truncate to the first page.
 
 ### Step 0e — Display the resolved scope and the test count, then continue
 
-Display the cross-test context block (the §4.7 analogue of §4.5) before acting, so the run is auditable:
+Display the cross-test context block before acting, so the run is auditable:
 
 ```
-Scope:      Project <project name>  (ID: <project_id>)        ← or "Workspace <name>" for a workspace digest
-Workspace:  <workspace name>  (ID: <workspace_id>)
+Scope:      Whole account  (all workspaces)                   ← or "Workspace <name> (ID)" / "Project <name> (ID)"
 Account:    <account name>  (ID: <account_id>)
+Workspaces: <N swept>                                         ← for account scope; omit for a workspace/project digest
 Window:     <resolved window, e.g. last 24h: 2026-06-26 09:00 → 2026-06-27 09:00>
 Tests:      <N> tests in scope
 ```
 
-Carry this resolved scope forward as **conversational memory** for later skills in the same conversation (display it, allow a one-step "switch"); **never persist it** (§4.6, ADR-0012).
+Carry this resolved scope forward as **conversational memory** for later skills in the same conversation (display it, allow a one-step "switch"); **never persist it** to disk.
 
 ## Step 1 — Resolve the window
 
@@ -96,7 +102,7 @@ Absolute pass/fail is not enough: a run can pass its criteria yet be **meaningfu
 
 ### 4a. Resolve the per-test baseline (pinned → CI file → last-passing)
 
-Reuse the baseline concept and the **shared script** from `bzm-baseline` / ADR-0017 — **do not** re-implement baseline logic. Resolution order, per test:
+Reuse the baseline concept and the **shared script** from `bzm-baseline` — **do not** re-implement baseline logic. Resolution order, per test:
 
 1. **Conversational pin** — if the user pinned a baseline `execution_id` for this test earlier in the conversation, use it.
 2. **Committed CI file** — if the repo has a `.blazemeter/baseline.json`, read its entry for this `test_id`:
@@ -156,7 +162,7 @@ A short (3–7 item) **prioritized** list distilled from the incidents — the s
 ## Output template
 
 ```
-## BlazeMeter Daily Digest — <scope name> (<project|workspace> ID: <id>)
+## BlazeMeter Daily Digest — <scope name> (Account/Workspace/Project ID: <id>)
 **Window:** <from> → <to>   |   **Tests in scope:** N   |   **Ran in window:** M   |   **Account:** <account name> (<account_id>)
 
 ### TL;DR — what needs your eyes today
@@ -198,7 +204,7 @@ Nothing ran in this window. No executions to report.
 
 ## Gotchas
 
-- **Cross-test scope, not one test (§4.7).** Step 0 resolves to a **scope** and **enumerates** its tests — a full first page of `blazemeter_tests list` is expected and means "keep paging", **not** "ask the user to name one test". Only an impractically large scope warrants asking the user to narrow to a project.
+- **Ask the scope; then enumerate, don't narrow to one test.** Step 0 resolves the **account**, **asks** the user the rollup breadth (whole account / a workspace / a project — never assumed), and enumerates every test in it — a full first page of `blazemeter_tests list` means "keep paging", **not** "ask the user to name one test". A whole-account sweep of a large account (>50 workspaces / hundreds of tests) is the one case to flag up front and offer to narrow.
 - **Pagination.** Every `list` action (`workspaces`, `project`, `tests`, `execution`) maxes at **50 per page** — page by `offset`. For executions, stop paging a test once a page is entirely older than the window's `from`.
 - **Statuses to skip.** Roll up only `ENDED`/`PASSED`/`FAILED`. **Skip `TERMINATED`/`ERROR`** (incomplete data) — count them as "skipped (partial)", never fold their KPIs into the scoreboard.
 - **Load-config normalization.** If concurrency/duration changed between a run and its baseline, raw RPS isn't comparable — normalize to RPS-per-virtual-user before flagging a throughput regression, and say you did.
@@ -206,6 +212,6 @@ Nothing ran in this window. No executions to report.
 - **Per-test baseline caveats.** The baseline is resolved **per test** (pinned → committed `.blazemeter/baseline.json` → last-passing) via the shared `bzm_baseline.py` — don't re-implement that logic, and don't share one baseline across tests. If `last-passing` returns `null`, the test has **no baseline**: mark it "no baseline" and fall back to absolute pass/fail rather than inventing a reference. A baseline may legitimately predate the window, so page execution history further back than the window when the window itself contains no passing run. A malformed committed file exits non-zero — surface it, don't silently swallow it.
 - **Don't compare a run to itself.** If a test's only in-window run *is* its resolved last-passing baseline, there's no prior to regress against — note "baseline run" rather than reporting a 0% (or spurious) move.
 - **Failure criteria live on the test, not the execution.** `blazemeter_execution read` returns only the overall `execution_status`; the per-criterion thresholds and readable labels live on the **test object** (`blazemeter_tests read` → `failure_criteria.rules[]` + `meta.*`). At digest altitude, lead with the overall verdict and the KPI-vs-baseline deltas; reach into the test object's criteria only when explaining *why* a specific run failed.
-- **MCP-first.** Every retrieval here is a `blazemeter_*` MCP action (`*_list`, `*_read`, `read_all_reports`, `read_anomalies_stats`); no REST v4 fallback is needed. Only a genuine MCP gap would justify a documented REST call (conventions §5).
+- **MCP-first.** Every retrieval here is a `blazemeter_*` MCP action (`*_list`, `*_read`, `read_all_reports`, `read_anomalies_stats`); no REST v4 fallback is needed. Only a genuine MCP gap would justify a documented REST call.
 - **Parallelize.** Per-test execution lists, and per-execution `read_all_reports` + `read_anomalies_stats`, are all independent — fan them out in parallel; a serial sweep over a whole workspace is needlessly slow.
-- **Never persist scope.** The resolved account/workspace/project is conversational memory only — carried forward within the conversation, never written to disk (§4.6, ADR-0012). The committed `.blazemeter/baseline.json` is the user's own repo state and a different thing (ADR-0017).
+- **Never persist scope.** The resolved account/workspace/project is conversational memory only — carried forward within the conversation, never written to disk. The committed `.blazemeter/baseline.json` is the user's own repo state and a different thing.

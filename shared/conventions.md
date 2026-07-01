@@ -27,8 +27,9 @@ tests/                 # fixture-driven tests for the deterministic layer
 - A script or file a skill **opens at runtime** is referenced via **`${CLAUDE_PLUGIN_ROOT}`**
   (e.g. `${CLAUDE_PLUGIN_ROOT}/shared/scripts/foo.py`). Never use an absolute path from your own
   machine, and never reference files outside the plugin root — an installed plugin is copied into
-  a cache, so outside references break. (Prose links to docs like `shared/conventions.md` are
-  fine; this rule is about paths the skill actually executes or reads.)
+  a cache, so outside references break. (This rule is about paths the skill executes or reads at
+  runtime; §9 separately bans *any* reference — path or prose — to contributor docs from
+  user-facing surfaces.)
 
 ## 2. Frontmatter (enforced by CI)
 
@@ -244,6 +245,9 @@ A `SKILL.md` body, after the frontmatter, reads top-to-bottom as a procedure:
 Before a skill merges:
 
 - [ ] Frontmatter passes `lint_frontmatter.py` (CI enforces this).
+- [ ] User-facing surfaces pass `lint_user_facing.py` — no contributor-doc references (this file,
+      ADRs, issues/PRDs, CLAUDE.md/CONTEXT.md) in any `SKILL.md`, command, or runtime asset
+      (§9; CI enforces this).
 - [ ] Folder name == `name` == namespaced invocation works.
 - [ ] Step 0 Context Resolution is present and **displays** the resolved hierarchy (with ids).
 - [ ] Step 0 never assumes a single default: it confirms/overrides the default, applies the tiered
@@ -263,3 +267,29 @@ Before a skill merges:
       value in `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`) when preparing a
       *marketplace* release, since that path is version-pinned (see CLAUDE.md → "Making changes take
       effect").
+
+## 9. Skills are user-facing — keep contributor context out of them (enforced by CI)
+
+A `SKILL.md` body, a command file, and every asset a skill opens at runtime (e.g. the report
+template) are **loaded into end users' Claude sessions**. Anything written there ships as
+product. Contributor context — this file, `docs/adr/`, GitHub issues/PRDs, `CLAUDE.md`,
+`CONTEXT.md`, `docs/agents/`, CI internals — is the development environment and must never leak
+into those surfaces:
+
+- **Inline the rule, not its provenance.** Skills state their rules as self-contained prose
+  ("Always resolve and **display** the full context…"), never as citations ("per conventions §4",
+  "ADR-0017"). A citation either leaks contributor context or, worse, sends the user's agent off
+  to read contributor docs mid-session.
+- **What a skill MAY reference:** its own assets and shared scripts via `${CLAUDE_PLUGIN_ROOT}`,
+  sibling skills by name (`bzm-baseline`), MCP tools, and the user's own repo files
+  (`.blazemeter/baseline.json`).
+- **Traceability lives on the dev side.** This file and the ADRs describe which skills embed
+  which rule; PRs link the ADR. When a convention changes, grep the skills for the embedded
+  phrasing and update them — the duplication is deliberate and the price of clean shipping
+  surfaces.
+- **CI enforces it:** `shared/scripts/lint_user_facing.py` scans `skills/` and `commands/` for
+  contributor-doc references and fails the build on any hit. Run it locally:
+
+  ```bash
+  python shared/scripts/lint_user_facing.py skills commands
+  ```

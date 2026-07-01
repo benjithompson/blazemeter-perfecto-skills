@@ -9,7 +9,7 @@ This skill **retrieves and normalizes**, then fills a shipped HTML template. You
 
 ## Step 0 — Resolve and confirm context (account → workspace → project → test)
 
-This is the canonical Context Resolution step from `shared/conventions.md` §4. Always resolve and **display** the full context (with ids) before retrieving anything, so the user confirms you're reporting on the right test. **Don't assume:** the user may belong to multiple accounts, each with multiple workspaces/projects/tests, and the `blazemeter_user read` default is a suggestion to confirm, never a silent choice.
+Always resolve and **display** the full context (with ids) before retrieving anything, so the user confirms you're reporting on the right test. **Don't assume:** the user may belong to multiple accounts, each with multiple workspaces/projects/tests, and the `blazemeter_user read` default is a suggestion to confirm, never a silent choice.
 
 ### Step 0a — Identify the target test (two entry paths)
 

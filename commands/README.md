@@ -1,6 +1,6 @@
 # Commands
 
-Thin command entry points to skills live here. Per the PRD (issue #1), commands exist **only** as
+Thin command entry points to skills live here. Commands exist **only** as
 thin entry points to skills — there is no wrapper-per-MCP-operation. A command is a small `*.md`
 file that invokes a skill; the expertise stays in the skill under `skills/`.
 

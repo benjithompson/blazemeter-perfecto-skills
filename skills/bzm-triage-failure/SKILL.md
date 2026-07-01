@@ -9,7 +9,7 @@ This skill diagnoses a **single execution** in depth. It is the counterpart to `
 
 ## Step 0 — Resolve and confirm context (account → workspace → project → test → execution)
 
-This is the canonical Context Resolution step from `shared/conventions.md` §4, extended one level down to the **execution** under triage. Always resolve and **display** the full context (with ids) before pulling any reports, so the user can confirm you're diagnosing the right run. **Don't assume:** the user may belong to multiple accounts, each with multiple workspaces/projects/tests/executions, and the `blazemeter_user read` default is a suggestion to confirm, never a silent choice.
+Context resolution here extends one level down to the **execution** under triage. Always resolve and **display** the full context (with ids) before pulling any reports, so the user can confirm you're diagnosing the right run. **Don't assume:** the user may belong to multiple accounts, each with multiple workspaces/projects/tests/executions, and the `blazemeter_user read` default is a suggestion to confirm, never a silent choice.
 
 ### Step 0a — Identify the target execution (entry paths)
 
