@@ -335,6 +335,153 @@ def test_plan_census_counts_without_fetching_reports(tmp_path, capsys):
     assert not any("/masters" in path for path, _ in transport.calls)
 
 
+# --- end-to-end history over the single-test fixture --------------------------------
+
+
+def history_args(tmp_path, **overrides) -> argparse.Namespace:
+    defaults = dict(
+        test_id="301",
+        from_="1000000",
+        to="2000000",
+        out=str(tmp_path / "history.json"),
+        baseline_file=None,
+        pins=None,
+        concurrency=2,
+        max_failure_rate=0.2,
+        no_anomalies=False,
+    )
+    defaults.update(overrides)
+    return argparse.Namespace(**defaults)
+
+
+def run_history(tmp_path, **overrides):
+    transport = FakeTransport.from_fixture("test_history.json")
+    args = history_args(tmp_path, **overrides)
+    rc = bzm_fetch.cmd_history(args, transport)
+    history = json.loads(Path(args.out).read_text(encoding="utf-8"))
+    return rc, history, transport
+
+
+def test_history_produces_the_per_run_series(tmp_path, capsys):
+    rc, history, transport = run_history(tmp_path)
+
+    assert rc == 0
+    assert history["schema_version"] == bzm_fetch.SCHEMA_VERSION
+    assert history["test_id"] == "301" and history["test_name"] == "checkout-flow"
+
+    # Window edges: 9000 ends exactly at --from (included); 8000 predates it (excluded).
+    assert [r["execution_id"] for r in history["runs"]] == [
+        "9000", "9051", "9101", "9201", "9301", "9401",
+    ]  # chronological, oldest first — the trend axis
+
+    # Status buckets: pass/fail carry KPIs; abort is skipped-partial; noData inconclusive.
+    buckets = {r["execution_id"]: r["bucket"] for r in history["runs"]}
+    assert buckets["9401"] == "kpi" and buckets["9301"] == "kpi"
+    assert buckets["9101"] == "partial" and buckets["9051"] == "inconclusive"
+    assert history["runs_in_window"] == 6 and history["kpi_runs"] == 4
+    assert history["passed"] == 3 and history["failed"] == 1
+    assert history["skipped_partial"] == 1 and history["inconclusive"] == 1
+
+    # No report fetches for partial/inconclusive/out-of-window runs.
+    fetched = [path for path, _ in transport.calls if "/reports/" in path]
+    assert not any(m in p for m in ("9101", "9051", "8000") for p in fetched)
+
+    # Baseline: last-passing excludes the candidate (9301, the newest failing run).
+    assert history["candidate_execution_id"] == "9301"
+    assert history["baseline"] == {"source": "last-passing", "execution_id": "9401"}
+    assert history["baseline_kpis"]["avg_ms"] == 210
+
+    runs = {r["execution_id"]: r for r in history["runs"]}
+    # The baseline run is marked and never compared to itself.
+    assert runs["9401"]["is_baseline"] and runs["9401"]["deltas"] == {}
+    # The failing run's deltas vs the baseline, plus its per-run incidents.
+    assert runs["9301"]["deltas"]["avg"] == {"pct": 42.9, "adverse": True}
+    assert runs["9301"]["deltas"]["p95"]["pct"] == 40.0
+    assert runs["9301"]["regressed"] and runs["9301"]["worst_kpi_move"]["kpi"] == "avg"
+    assert runs["9301"]["anomaly_status"] == "anomalies_with_details"
+    assert runs["9301"]["anomalies"] == [{"kpi": "p95", "label": "/search"}]
+    # A near-identical green run gets deltas but no adverse flags.
+    assert runs["9201"]["deltas"] and not runs["9201"]["regressed"]
+    # Zero-hit summary row (GUI/EUX-style) -> KPIs unavailable, never fabricated.
+    assert runs["9000"]["kpis"] is None and "kpis_unavailable" in runs["9000"]["notes"]
+    assert runs["9000"]["deltas"] == {}
+    assert runs["9000"]["anomaly_status"] == "statistics_unavailable"
+
+    types = [c["type"] for c in history["incident_candidates"]]
+    assert sorted(types) == ["endpoint_error_spike", "error_spike", "failure", "regression"]
+    spike = next(c for c in history["incident_candidates"] if c["type"] == "error_spike")
+    assert spike["severe"] and spike["error_rate_pct"] == 26.0
+    endpoint = next(c for c in history["incident_candidates"] if c["type"] == "endpoint_error_spike")
+    assert endpoint["label"] == "/search" and endpoint["errors_rate_pct"] == 98.0
+    assert history["regressed_runs"] == 1
+
+    out = capsys.readouterr().out
+    assert "6 runs in window" in out and "wrote" in out
+
+
+def test_history_baseline_precedence_pin_beats_file(tmp_path):
+    pins = tmp_path / "pins.json"
+    pins.write_text(json.dumps({"301": 9201}), encoding="utf-8")
+    baseline_file = tmp_path / "baseline.json"
+    baseline_file.write_text(json.dumps({"301": "9401"}), encoding="utf-8")
+
+    rc, history, _ = run_history(tmp_path, pins=str(pins), baseline_file=str(baseline_file))
+    assert history["baseline"] == {"source": "pin", "execution_id": "9201"}
+    # Deltas are re-anchored on the pinned run.
+    runs = {r["execution_id"]: r for r in history["runs"]}
+    assert runs["9201"]["is_baseline"] and runs["9201"]["deltas"] == {}
+    assert runs["9401"]["deltas"]["avg"]["pct"] == 2.4
+
+    rc, history, _ = run_history(tmp_path, baseline_file=str(baseline_file))
+    assert history["baseline"] == {"source": "file", "execution_id": "9401"}
+
+
+def test_history_pin_at_candidate_notes_nothing_to_compare(tmp_path):
+    pins = tmp_path / "pins.json"
+    pins.write_text(json.dumps({"301": 9301}), encoding="utf-8")
+    rc, history, _ = run_history(tmp_path, pins=str(pins))
+    assert history["baseline"] == {"source": "pin", "execution_id": "9301"}
+    assert "baseline_is_only_run" in history["notes"]
+    runs = {r["execution_id"]: r for r in history["runs"]}
+    # The candidate is its own baseline: no self-comparison, no fabricated 0% move.
+    assert runs["9301"]["is_baseline"] and runs["9301"]["deltas"] == {}
+    assert not runs["9301"]["regressed"]
+    # Other runs still compare against the pinned run.
+    assert runs["9401"]["deltas"] and not runs["9401"]["regressed"]
+
+
+def test_history_empty_window_reports_no_runs(tmp_path, capsys):
+    rc, history, _ = run_history(tmp_path, from_="3000000", to="4000000")
+    assert rc == 0
+    assert history["runs_in_window"] == 0 and history["runs"] == []
+    assert history["candidate_execution_id"] is None
+    assert history["incident_candidates"] == []
+    assert "0 runs in window" in capsys.readouterr().out
+
+
+def test_history_rejects_inverted_window(tmp_path, capsys):
+    transport = FakeTransport.from_fixture("test_history.json")
+    rc = bzm_fetch.cmd_history(history_args(tmp_path, from_="2000000", to="1000000"), transport)
+    assert rc == 2
+    assert "--from must be earlier than --to" in capsys.readouterr().err
+
+
+def test_history_exceeding_max_failure_rate_exits_nonzero(tmp_path, capsys):
+    transport = FakeTransport.from_fixture("test_history.json")
+    transport.routes = [r for r in transport.routes if "/reports/" not in r["path"]
+                        and "/anomalies/" not in r["path"]]
+    args = history_args(tmp_path, max_failure_rate=0.1)
+    rc = bzm_fetch.cmd_history(args, transport)
+    assert rc == 3
+    history = json.loads(Path(args.out).read_text(encoding="utf-8"))
+    assert history["coverage"]["http_failed"] > 0
+    assert history["coverage"]["failures"]  # named failed items, honest coverage
+    assert "baseline_kpis_unavailable" in history["notes"]
+    runs = {r["execution_id"]: r for r in history["runs"]}
+    assert all(r["kpis"] is None for r in runs.values() if r["bucket"] == "kpi")
+    assert "exceeds --max-failure-rate" in capsys.readouterr().err
+
+
 # --- live drift tripwire (auto-skips without credentials) ----------------------------
 
 _HAVE_CREDS = bool(

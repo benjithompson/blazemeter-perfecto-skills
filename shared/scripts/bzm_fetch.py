@@ -21,6 +21,13 @@ Subcommands:
          (pins > committed file > last passing) -> compute KPI deltas and verdicts
          -> write the digest JSON to --out. Stdout is a five-line human summary.
 
+  history  One test's run history: list the test's executions, keep those
+         overlapping [--from, --to) (same paging/stop rule and status buckets as
+         sweep) -> fetch each KPI-bucket run's summary -> resolve the baseline
+         (same precedence as sweep) -> per-run KPIs + deltas vs the baseline,
+         anomaly status per run, incident candidates -> write the history JSON
+         (size O(runs-kept), oldest-first) to --out. Stdout is a five-line summary.
+
 Credentials (same environment variables the BlazeMeter MCP uses; never on argv,
 never echoed):
 
@@ -41,6 +48,8 @@ Usage:
     python bzm_fetch.py sweep --project-id 777 \
         --from 2026-06-30T09:00:00Z --to 2026-07-01T09:00:00Z \
         --baseline-file .blazemeter/baseline.json --out digest.json
+    python bzm_fetch.py history --test-id 15725552 \
+        --from 2026-06-01T00:00:00Z --to 2026-07-01T00:00:00Z --out history.json
 """
 
 from __future__ import annotations
@@ -313,6 +322,35 @@ def pick_candidate(kpi_runs: list[dict]) -> dict | None:
     return newest
 
 
+def resolve_test_baseline(
+    test_id: str,
+    masters: list[dict],
+    candidate: dict | None,
+    pins: dict[str, str],
+    baseline_file: dict[str, str],
+) -> dict:
+    """Baseline precedence: conversational pin > committed file > last passing run.
+
+    The candidate is excluded from last-passing selection — otherwise a green
+    run would always be its own baseline and a still-green regression could
+    never be detected. (A *pinned* baseline may still point at the candidate;
+    callers surface that as `baseline_is_only_run`.)
+    """
+    pinned = pins.get(test_id) or baseline_file.get(test_id)
+    if pinned is not None:
+        return {"source": "pin" if test_id in pins else "file", "execution_id": str(pinned)}
+    chosen = bzm_baseline.select_last_passing(
+        [
+            {"id": m.get("id"), "status": m.get("reportStatus"), "end_time": m.get("ended")}
+            for m in masters
+            if candidate is None or m.get("id") != candidate.get("id")
+        ]
+    )
+    if chosen:
+        return {"source": "last-passing", "execution_id": str(chosen["id"])}
+    return {"source": "none", "execution_id": None}
+
+
 def anomaly_status(payload: dict | None) -> str:
     """Map /anomalies/stats to no_anomalies | anomalies_with_details | statistics_unavailable."""
     if not payload or not isinstance(payload.get("result"), dict):
@@ -511,27 +549,7 @@ def judge_test(
     passed = sum(1 for m in kpi_runs if str(m.get("reportStatus")) == "pass")
 
     candidate = pick_candidate(kpi_runs)
-
-    # Baseline: conversational pin > committed file > last passing run in history.
-    # The candidate is excluded from last-passing selection — otherwise a green
-    # run would always be its own baseline and a still-green regression could
-    # never be detected.
-    pinned = pins.get(test_id) or baseline_file.get(test_id)
-    if pinned is not None:
-        baseline = {"source": "pin" if test_id in pins else "file", "execution_id": str(pinned)}
-    else:
-        chosen = bzm_baseline.select_last_passing(
-            [
-                {"id": m.get("id"), "status": m.get("reportStatus"), "end_time": m.get("ended")}
-                for m in masters
-                if candidate is None or m.get("id") != candidate.get("id")
-            ]
-        )
-        baseline = (
-            {"source": "last-passing", "execution_id": str(chosen["id"])}
-            if chosen
-            else {"source": "none", "execution_id": None}
-        )
+    baseline = resolve_test_baseline(test_id, masters, candidate, pins, baseline_file)
 
     entry: dict = {
         "test_id": test_id,
@@ -696,17 +714,22 @@ def cmd_plan(args, transport) -> int:
     return 0
 
 
+def _load_pins_and_baseline(args) -> tuple[dict[str, str], dict[str, str]]:
+    pins: dict[str, str] = {}
+    if args.pins:
+        raw = json.loads(Path(args.pins).read_text(encoding="utf-8"))
+        pins = {str(k): str(v) for k, v in raw.items()}
+    baseline_file = bzm_baseline.load_baseline(args.baseline_file) if args.baseline_file else {}
+    return pins, baseline_file
+
+
 def cmd_sweep(args, transport) -> int:
     from_ts, to_ts = parse_when(args.from_), parse_when(args.to)
     if from_ts >= to_ts:
         print("error: --from must be earlier than --to", file=sys.stderr)
         return 2
 
-    pins: dict[str, str] = {}
-    if args.pins:
-        raw = json.loads(Path(args.pins).read_text(encoding="utf-8"))
-        pins = {str(k): str(v) for k, v in raw.items()}
-    baseline_file = bzm_baseline.load_baseline(args.baseline_file) if args.baseline_file else {}
+    pins, baseline_file = _load_pins_and_baseline(args)
 
     cov = Coverage()
     sweeper = Sweeper(transport, cov, concurrency=args.concurrency)
@@ -786,6 +809,207 @@ def cmd_sweep(args, transport) -> int:
     return 0
 
 
+def cmd_history(args, transport) -> int:
+    """One test's windowed run history -> per-run KPI/delta series JSON at --out."""
+    from_ts, to_ts = parse_when(args.from_), parse_when(args.to)
+    if from_ts >= to_ts:
+        print("error: --from must be earlier than --to", file=sys.stderr)
+        return 2
+
+    pins, baseline_file = _load_pins_and_baseline(args)
+    cov = Coverage()
+    sweeper = Sweeper(transport, cov, concurrency=args.concurrency)
+    test_id = str(args.test_id)
+
+    # Scope-level read: a bad test id must fail loudly, not read as "idle test".
+    test = transport.get("/tests/%s" % test_id).get("result") or {}
+    cov.ok()
+
+    masters = sweeper.masters_for_test(test_id, from_ts)
+    in_window = sorted(
+        (m for m in masters if overlaps_window(m, from_ts, to_ts)),
+        key=lambda m: (m.get("ended") or m.get("updated") or m.get("created") or 0, str(m.get("id"))),
+    )
+    buckets: dict[str, list[dict]] = {"kpi": [], "partial": [], "inconclusive": [], "running": []}
+    for m in in_window:
+        buckets[run_bucket(m)].append(m)
+    kpi_runs = buckets["kpi"]
+    passed = sum(1 for m in kpi_runs if str(m.get("reportStatus")) == "pass")
+
+    candidate = pick_candidate(kpi_runs)
+    baseline = resolve_test_baseline(test_id, masters, candidate, pins, baseline_file)
+
+    # Per-run summaries for KPI-bucket runs only (partial runs would distort the
+    # trend; inconclusive runs have nothing to fetch). One parallel pass.
+    kpi_ids = [str(m.get("id")) for m in kpi_runs]
+    kpis_by_id = dict(zip(kpi_ids, sweeper.pool.map(sweeper.fetch_summary, kpi_ids)))
+
+    notes: list[str] = []
+    baseline_kpis = None
+    if baseline["execution_id"] is None:
+        notes.append("no_baseline")
+    else:
+        if candidate and str(candidate["id"]) == baseline["execution_id"]:
+            notes.append("baseline_is_only_run")
+        if baseline["execution_id"] in kpis_by_id:
+            baseline_kpis = kpis_by_id[baseline["execution_id"]]
+        else:
+            baseline_kpis = sweeper.fetch_summary(baseline["execution_id"])
+        if baseline_kpis is None:
+            notes.append("baseline_kpis_unavailable")
+
+    anomalies_by_id: dict[str, dict | None] = {}
+    if not args.no_anomalies:
+        anomalies_by_id = dict(
+            zip(
+                kpi_ids,
+                sweeper.pool.map(
+                    lambda mid: sweeper.fetch_optional("/masters/%s/anomalies/stats", "anomalies", mid),
+                    kpi_ids,
+                ),
+            )
+        )
+
+    runs: list[dict] = []
+    incident_candidates: list[dict] = []
+    regressed_runs = 0
+    for m in in_window:
+        run_id = str(m.get("id"))
+        bucket = run_bucket(m)
+        entry: dict = {
+            "execution_id": run_id,
+            "name": m.get("name"),
+            "started": m.get("created"),
+            "ended": m.get("ended"),
+            "report_status": str(m.get("reportStatus") or "unset"),
+            "bucket": bucket,
+            "kpis": None,
+            "deltas": {},
+            "worst_kpi_move": None,
+            "regressed": False,
+            "is_baseline": run_id == baseline["execution_id"],
+            "notes": [],
+        }
+        if bucket == "kpi":
+            kpis = kpis_by_id.get(run_id)
+            entry["kpis"] = kpis
+            if kpis is None:
+                entry["notes"].append("kpis_unavailable")
+            elif baseline_kpis and not entry["is_baseline"]:
+                entry["deltas"] = compute_deltas(kpis, baseline_kpis)
+                entry["worst_kpi_move"] = worst_kpi_move(entry["deltas"])
+                entry["regressed"] = entry["worst_kpi_move"] is not None
+                if entry["regressed"]:
+                    regressed_runs += 1
+                    incident_candidates.append(
+                        {
+                            "type": "regression",
+                            "execution_id": run_id,
+                            "worst_kpi_move": entry["worst_kpi_move"],
+                        }
+                    )
+            if str(m.get("reportStatus")) == "fail":
+                incident_candidates.append({"type": "failure", "execution_id": run_id})
+            if kpis and kpis["error_rate_pct"] >= ERROR_SPIKE_PCT:
+                incident_candidates.append(
+                    {
+                        "type": "error_spike",
+                        "execution_id": run_id,
+                        "error_rate_pct": round(kpis["error_rate_pct"], 2),
+                        "severe": kpis["error_rate_pct"] >= ERROR_SPIKE_SEVERE_PCT,
+                    }
+                )
+            if not args.no_anomalies:
+                payload = anomalies_by_id.get(run_id)
+                status = anomaly_status(payload)
+                entry["anomaly_status"] = status
+                if status == "anomalies_with_details":
+                    entry["anomalies"] = [
+                        {"kpi": a.get("kpi"), "label": a.get("labelName")}
+                        for a in (payload["result"].get("anomalies") or [])[:10]
+                    ]
+        runs.append(entry)
+
+    # Per-endpoint spike check on the candidate only; whole-history endpoint
+    # drill-ins stay interactive (MCP) so the JSON stays O(runs-kept).
+    if candidate:
+        agg = sweeper.fetch_optional(
+            "/masters/%s/reports/aggregatereport/data", "request_stats", candidate["id"]
+        )
+        for label in (agg or {}).get("result") or []:
+            samples = label.get("samples") or 0
+            errors = label.get("errorsCount") or 0
+            rate_pct = (100.0 * errors / samples) if samples else 0.0
+            if samples >= ENDPOINT_SPIKE_MIN_SAMPLES and rate_pct >= ENDPOINT_SPIKE_RATE:
+                incident_candidates.append(
+                    {
+                        "type": "endpoint_error_spike",
+                        "execution_id": str(candidate["id"]),
+                        "label": label.get("labelName"),
+                        "errors_rate_pct": round(rate_pct, 1),
+                        "samples": samples,
+                    }
+                )
+
+    anomalies_unavailable = sum(
+        1 for r in runs if r.get("anomaly_status") == "statistics_unavailable"
+    )
+    history = {
+        "schema_version": SCHEMA_VERSION,
+        "test_id": test_id,
+        "test_name": test.get("name"),
+        "window": {"from": from_ts, "to": to_ts},
+        "runs_in_window": len(in_window),
+        "kpi_runs": len(kpi_runs),
+        "passed": passed,
+        "failed": len(kpi_runs) - passed,
+        "skipped_partial": len(buckets["partial"]),
+        "inconclusive": len(buckets["inconclusive"]),
+        "still_running": len(buckets["running"]),
+        "baseline": baseline,
+        "baseline_kpis": baseline_kpis,
+        "candidate_execution_id": str(candidate["id"]) if candidate else None,
+        "regressed_runs": regressed_runs,
+        "runs": runs,
+        "incident_candidates": incident_candidates,
+        "notes": notes,
+        "coverage": {
+            "http_attempted": cov.attempted,
+            "http_failed": cov.failed,
+            "failures": cov.failures[:50],
+            "skipped_partial_runs": len(buckets["partial"]),
+            "inconclusive_runs": len(buckets["inconclusive"]),
+            "anomalies_unavailable": anomalies_unavailable,
+        },
+    }
+
+    out = Path(args.out)
+    out.write_text(json.dumps(history, indent=2) + "\n", encoding="utf-8")
+
+    print(
+        "history: test %s (%s): %d runs in window, %d with KPI verdicts"
+        % (test_id, test.get("name") or "unnamed", len(in_window), len(kpi_runs))
+    )
+    print(
+        "pass/fail: %d/%d | regressed runs: %d | baseline: %s %s"
+        % (passed, len(kpi_runs) - passed, regressed_runs, baseline["source"], baseline["execution_id"] or "-")
+    )
+    print(
+        "coverage: %d/%d fetches ok (%d failed) | partial runs skipped: %d"
+        % (cov.attempted - cov.failed, cov.attempted, cov.failed, len(buckets["partial"]))
+    )
+    print("wrote %s" % out)
+
+    if cov.rate() > args.max_failure_rate:
+        print(
+            "error: fetch failure rate %.0f%% exceeds --max-failure-rate %.0f%% — "
+            "history written but incomplete" % (100 * cov.rate(), 100 * args.max_failure_rate),
+            file=sys.stderr,
+        )
+        return 3
+    return 0
+
+
 # --- CLI ------------------------------------------------------------------------
 
 
@@ -795,6 +1019,21 @@ def _add_scope_args(parser: argparse.ArgumentParser) -> None:
     group.add_argument("--workspace-id", help="sweep one workspace")
     group.add_argument("--project-id", help="sweep one project")
     parser.add_argument("--concurrency", type=int, default=8, help="parallel fetches (default 8)")
+
+
+def _add_window_args(parser: argparse.ArgumentParser, out_help: str) -> None:
+    parser.add_argument("--from", dest="from_", required=True, help="window start (ISO-8601 or epoch)")
+    parser.add_argument("--to", required=True, help="window end (ISO-8601 or epoch)")
+    parser.add_argument("--out", required=True, help=out_help)
+    parser.add_argument("--baseline-file", help="committed .blazemeter/baseline.json path")
+    parser.add_argument("--pins", help="JSON file of conversational pins {test_id: execution_id}")
+    parser.add_argument(
+        "--max-failure-rate",
+        type=float,
+        default=0.2,
+        help="exit non-zero when this fraction of fetches failed (default 0.2)",
+    )
+    parser.add_argument("--no-anomalies", action="store_true", help="skip anomaly-stats fetches")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -813,19 +1052,19 @@ def main(argv: list[str] | None = None) -> int:
         "sweep", help="Full windowed sweep -> pre-aggregated digest JSON at --out."
     )
     _add_scope_args(p_sweep)
-    p_sweep.add_argument("--from", dest="from_", required=True, help="window start (ISO-8601 or epoch)")
-    p_sweep.add_argument("--to", required=True, help="window end (ISO-8601 or epoch)")
-    p_sweep.add_argument("--out", required=True, help="path for the digest JSON")
-    p_sweep.add_argument("--baseline-file", help="committed .blazemeter/baseline.json path")
-    p_sweep.add_argument("--pins", help="JSON file of conversational pins {test_id: execution_id}")
-    p_sweep.add_argument(
-        "--max-failure-rate",
-        type=float,
-        default=0.2,
-        help="exit non-zero when this fraction of fetches failed (default 0.2)",
-    )
-    p_sweep.add_argument("--no-anomalies", action="store_true", help="skip anomaly-stats fetches")
+    _add_window_args(p_sweep, out_help="path for the digest JSON")
     p_sweep.set_defaults(func=cmd_sweep)
+
+    p_history = sub.add_parser(
+        "history",
+        help="One test's windowed run history -> per-run KPI/delta series JSON at --out.",
+    )
+    p_history.add_argument("--test-id", required=True, help="the test whose runs to pull")
+    p_history.add_argument(
+        "--concurrency", type=int, default=8, help="parallel fetches (default 8)"
+    )
+    _add_window_args(p_history, out_help="path for the history JSON")
+    p_history.set_defaults(func=cmd_history)
 
     args = parser.parse_args(argv)
     if not getattr(args, "command", None):
