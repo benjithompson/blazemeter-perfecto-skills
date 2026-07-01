@@ -1,0 +1,127 @@
+{
+  "comment": "Canned v4 responses for a small project sweep: project 101 with two tests. Shapes mirror shared/scripts/API_NOTES.md (scrubbed from real responses). Test 201 passes but regresses p95 vs its baseline (8000, pinned via the committed file) and has one near-100%-error endpoint; test 202's newest run fails outright with a 28% error rate and two anomalies.",
+  "routes": [
+    {
+      "path": "/projects/101",
+      "response": {
+        "result": { "id": 101, "name": "Checkout", "workspaceId": 11 },
+        "error": null
+      }
+    },
+    {
+      "path": "/tests",
+      "params": { "projectId": "101" },
+      "response": {
+        "result": [
+          { "id": 201, "name": "checkout-flow", "projectId": 101 },
+          { "id": 202, "name": "search-api", "projectId": 101 }
+        ],
+        "total": 2, "skip": 0, "limit": 50, "error": null
+      }
+    },
+    {
+      "path": "/masters",
+      "params": { "testId": "201", "skip": "0" },
+      "response": {
+        "result": [
+          { "id": 9001, "name": "checkout-flow", "created": 1500000, "updated": 1503600, "ended": 1503600, "reportStatus": "pass" },
+          { "id": 8000, "name": "checkout-flow", "created": 500000, "updated": 503600, "ended": 503600, "reportStatus": "pass" }
+        ],
+        "total": 2, "skip": 0, "limit": 50, "error": null
+      }
+    },
+    {
+      "path": "/masters",
+      "params": { "testId": "202", "skip": "0" },
+      "response": {
+        "result": [
+          { "id": 9101, "name": "search-api", "created": 1600000, "updated": 1603600, "ended": 1603600, "reportStatus": "fail" },
+          { "id": 9100, "name": "search-api", "created": 1550000, "updated": 1553600, "ended": 1553600, "reportStatus": "pass" },
+          { "id": 8100, "name": "search-api", "created": 400000, "updated": 403600, "ended": 403600, "reportStatus": "error" }
+        ],
+        "total": 3, "skip": 0, "limit": 50, "error": null
+      }
+    },
+    {
+      "path": "/masters/9001/reports/default/summary",
+      "response": {
+        "result": {
+          "summary": [
+            { "id": "ALL", "lb": "ALL", "hits": 1000, "failed": 4, "avg": 240, "min": 40, "max": 1900, "median": 210, "tp90": 400, "tp95": 642, "tp99": 800, "hits_avg": 16.7, "duration": 60, "maxUsers": 20, "bytes": 8400000, "size_avg": 8400 }
+          ]
+        },
+        "error": null
+      }
+    },
+    {
+      "path": "/masters/8000/reports/default/summary",
+      "response": {
+        "result": {
+          "summary": [
+            { "id": "ALL", "lb": "ALL", "hits": 1000, "failed": 0, "avg": 200, "min": 38, "max": 1500, "median": 190, "tp90": 380, "tp95": 480, "tp99": 700, "hits_avg": 16.9, "duration": 60, "maxUsers": 20, "bytes": 8300000, "size_avg": 8300 }
+          ]
+        },
+        "error": null
+      }
+    },
+    {
+      "path": "/masters/9101/reports/default/summary",
+      "response": {
+        "result": {
+          "summary": [
+            { "id": "ALL", "lb": "ALL", "hits": 500, "failed": 140, "avg": 300, "min": 50, "max": 2400, "median": 260, "tp90": 450, "tp95": 500, "tp99": 600, "hits_avg": 8.0, "duration": 60, "maxUsers": 10, "bytes": 4100000, "size_avg": 8200 }
+          ]
+        },
+        "error": null
+      }
+    },
+    {
+      "path": "/masters/9100/reports/default/summary",
+      "response": {
+        "result": {
+          "summary": [
+            { "id": "ALL", "lb": "ALL", "hits": 500, "failed": 2, "avg": 280, "min": 48, "max": 1800, "median": 250, "tp90": 440, "tp95": 490, "tp99": 590, "hits_avg": 8.2, "duration": 60, "maxUsers": 10, "bytes": 4000000, "size_avg": 8000 }
+          ]
+        },
+        "error": null
+      }
+    },
+    {
+      "path": "/masters/9001/reports/aggregatereport/data",
+      "response": {
+        "result": [
+          { "labelId": "L1", "labelName": "/checkout", "samples": 120, "errorsCount": 118, "errorsRate": 98.3, "avgResponseTime": 900, "90line": 1500, "95line": 1700, "99line": 1880 },
+          { "labelId": "L2", "labelName": "/cart", "samples": 880, "errorsCount": 0, "errorsRate": 0, "avgResponseTime": 150, "90line": 300, "95line": 380, "99line": 520 }
+        ],
+        "error": null
+      }
+    },
+    {
+      "path": "/masters/9101/reports/aggregatereport/data",
+      "response": {
+        "result": [
+          { "labelId": "L3", "labelName": "/search", "samples": 500, "errorsCount": 140, "errorsRate": 28.0, "avgResponseTime": 300, "90line": 450, "95line": 500, "99line": 600 }
+        ],
+        "error": null
+      }
+    },
+    {
+      "path": "/masters/9001/anomalies/stats",
+      "response": { "result": { "anomalyCount": 0, "affectedLabel": [], "anomalies": [] }, "error": null }
+    },
+    {
+      "path": "/masters/9101/anomalies/stats",
+      "response": {
+        "result": {
+          "anomalyCount": 2,
+          "affectedLabel": ["/search"],
+          "anomalies": [
+            { "labelId": "L3", "labelName": "/search", "kpi": "p95", "startTime": 1601000, "endTime": 1602000, "maxSpikeHeight": 3.2 },
+            { "labelId": "L3", "labelName": "/search", "kpi": "errors", "startTime": 1601200, "endTime": 1602400, "maxSpikeHeight": 5.1 }
+          ]
+        },
+        "error": null
+      }
+    }
+  ]
+}
