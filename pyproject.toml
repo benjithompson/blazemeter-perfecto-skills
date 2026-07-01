@@ -6,3 +6,6 @@ testpaths = ["tests"]
 # Fixtures under tests/fixtures are deliberately malformed SKILL.md files used as
 # test data, not test modules — keep pytest from trying to collect them.
 norecursedirs = ["tests/fixtures"]
+markers = [
+    "live: hits the real BlazeMeter API; auto-runs when credentials are present, auto-skips otherwise (CI has none)",
+]
