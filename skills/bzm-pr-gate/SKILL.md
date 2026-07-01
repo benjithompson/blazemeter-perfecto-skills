@@ -7,15 +7,15 @@ A flagship **Journey** that gates one pull request on performance. It orchestrat
 
 **This skill does not reinvent run / baseline / compare logic — it delegates to those skills' procedures and only adds the orchestration and the GitHub round-trip.** Where a step says "as in bzm-run-test" (etc.), follow that skill's prose exactly (its MCP calls, its gotchas, its output); do not duplicate or paraphrase its rules here.
 
-Integration posture (conventions §5, ADR-0016): BlazeMeter work is **BlazeMeter-MCP-first**; the GitHub round-trip is **GitHub-MCP-first**. Credentials are **never embedded, logged, or echoed** — BlazeMeter auth comes from the MCP's env vars (conventions §6) and GitHub auth comes from the GitHub MCP. The skill never handles a token.
+Integration posture: BlazeMeter work is **BlazeMeter-MCP-first**; the GitHub round-trip is **GitHub-MCP-first**. Credentials are **never embedded, logged, or echoed** — BlazeMeter auth comes from the MCP's env vars and GitHub auth comes from the GitHub MCP. The skill never handles a token.
 
 ## Step 0 — Resolve and confirm BOTH targets (the BlazeMeter test AND the PR)
 
 A PR gate has two targets: the **BlazeMeter test** to run, and the **pull request** to post back onto. Resolve and **display both** before doing anything that costs minutes or writes to GitHub.
 
-### Step 0a — Resolve the BlazeMeter test (single-test §4 Context Resolution)
+### Step 0a — Resolve the BlazeMeter test (single-test Context Resolution)
 
-This is the canonical single-test Context Resolution step from `shared/conventions.md` §4 — the gate operates on **one** test for the PR. Resolve and **display** the full context (with ids) before running anything. **Don't assume:** the user may belong to multiple accounts, each with multiple workspaces/projects/tests, names collide across them, and the `blazemeter_user read` default is a suggestion to confirm, never a silent choice. Gating a PR against the wrong test posts a misleading verdict and burns minutes.
+The gate operates on **one** test for the PR. Resolve and **display** the full context (with ids) before running anything. **Don't assume:** the user may belong to multiple accounts, each with multiple workspaces/projects/tests, names collide across them, and the `blazemeter_user read` default is a suggestion to confirm, never a silent choice. Gating a PR against the wrong test posts a misleading verdict and burns minutes.
 
 **Identify the target test (two entry paths):**
 
@@ -89,7 +89,7 @@ Capture the resulting **candidate `execution_id`**. This is the candidate side o
 
 ## Step 2 — Resolve the baseline (delegate to bzm-baseline)
 
-**Delegate to `bzm-baseline`** to resolve the active baseline for this test, in its resolution order **pinned → committed `.blazemeter/baseline.json` → last-passing** (ADR-0017). Follow that skill's Step 3 exactly; it uses the shared script for the deterministic parts:
+**Delegate to `bzm-baseline`** to resolve the active baseline for this test, in its resolution order **pinned → committed `.blazemeter/baseline.json` → last-passing**. Follow that skill's Step 3 exactly; it uses the shared script for the deterministic parts:
 
 1. **Conversational pin** — if the user pinned an `execution_id` earlier in this conversation, that is the baseline.
 2. **Committed CI file** — if the repo has a `.blazemeter/baseline.json`, read its entry for this `test_id` with the script (do not hand-parse JSON):
@@ -127,7 +127,7 @@ Close the loop on GitHub. Two writes, both reflecting the same verdict:
 
 ### 4a — PR comment (GitHub MCP — `add_issue_comment`)
 
-Post the comment with the **GitHub MCP**, MCP-first per conventions §5 / ADR-0016. A PR's conversation comments are issue comments, so use **`add_issue_comment`** with the PR number as `issue_number`:
+Post the comment with the **GitHub MCP**, MCP-first. A PR's conversation comments are issue comments, so use **`add_issue_comment`** with the PR number as `issue_number`:
 
 ```
 add_issue_comment {
@@ -149,7 +149,7 @@ Set a status on the **head commit SHA** captured in Step 0b so the verdict shows
 
 Use a stable check **context/name** like `blazemeter/pr-gate` with a one-line description echoing the verdict, and point its target URL at the candidate's `execution_url`.
 
-> **Justified GitHub fallback (conventions §5, ADR-0016).** The GitHub MCP exposes **read**-side status/check tools (`pull_request_read` with `method: "get_status"` or `"get_check_runs"`, and `get_check_run`) but **no write tool to create a commit status or check run**. Setting the status is therefore the one documented place this skill drops to the **`gh` CLI / GitHub REST** fallback — exactly the "MCP-first, REST only for a genuine gap, and say so" posture. Create the status against the head SHA, e.g.:
+> **Justified GitHub fallback.** The GitHub MCP exposes **read**-side status/check tools (`pull_request_read` with `method: "get_status"` or `"get_check_runs"`, and `get_check_run`) but **no write tool to create a commit status or check run**. Setting the status is therefore the one documented place this skill drops to the **`gh` CLI / GitHub REST** fallback — exactly the "MCP-first, REST only for a genuine gap, and say so" posture. Create the status against the head SHA, e.g.:
 >
 > ```
 > gh api -X POST repos/<owner>/<repo>/statuses/<head SHA> \
@@ -232,8 +232,8 @@ with the `perforce:bzm-baseline` skill, then re-run the gate.
 - **No baseline is NOT a pass.** If nothing resolves (no pin, no committed file entry, no passing run), post the "cannot gate" comment and a non-`success` status — never a false green. This is the most important honesty guard.
 - **Config mismatch is NOT a clean regression — or a clean pass.** When achieved peak concurrency differs, surface bzm-compare-runs' CONFIG MISMATCH warning into the PR comment, show throughput as RPS-per-VU, and set the status to inconclusive (`error`/neutral), not `success`. A load-level difference must not masquerade as a code regression, nor be papered over as a pass.
 - **Set the status on the HEAD commit SHA, not the branch.** Capture the head SHA from `pull_request_read { method: "get" }` in Step 0b and attach the status to that SHA, so it lands on the exact commit GitHub shows on the PR. A force-push moves the head — re-read the PR if time has passed before posting.
-- **Commit-status write is the one justified GitHub fallback.** The GitHub MCP can *read* statuses/checks but not *create* them, so Step 4b uses `gh api`/REST per conventions §5 / ADR-0016 — and says why. Everything else GitHub (reading the PR, posting the comment) stays MCP-first via `pull_request_read` and `add_issue_comment`.
-- **Never embed or echo a token.** BlazeMeter auth is the MCP's env vars (conventions §6); GitHub auth is the GitHub MCP / already-configured `gh`. The PR comment, the status, and chat output contain **no** credential — not even a key-file path.
+- **Commit-status write is the one justified GitHub fallback.** The GitHub MCP can *read* statuses/checks but not *create* them, so Step 4b uses `gh api`/REST — and says why. Everything else GitHub (reading the PR, posting the comment) stays MCP-first via `pull_request_read` and `add_issue_comment`.
+- **Never embed or echo a token.** BlazeMeter auth is the MCP's env vars; GitHub auth is the GitHub MCP / already-configured `gh`. The PR comment, the status, and chat output contain **no** credential — not even a key-file path.
 - **A run costs minutes; a write is public.** Step 1 consumes test minutes and Step 4 posts a visible PR comment + status. Confirm both targets in Step 0c first; don't gate a closed/merged PR without asking.
 - **Completion before comparison.** The candidate must have `ended != null` before Step 3 — a partial run's KPIs look like a regression. bzm-run-test's polling already enforces this; don't shortcut it.
 - **Idempotency on re-runs.** Re-gating the same PR posts another comment and overwrites the `blazemeter/pr-gate` status (same context) on the head SHA. Mention that a fresh comment was added so the user isn't surprised by duplicates.

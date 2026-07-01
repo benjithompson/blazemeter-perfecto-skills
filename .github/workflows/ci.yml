@@ -30,6 +30,11 @@ jobs:
           fi
           echo "linter correctly rejected the malformed fixture"
 
+      - name: Lint user-facing surfaces for contributor references
+        # Skills/commands ship into end users' sessions (conventions §9); fail the
+        # build if any references dev docs (conventions, ADRs, issues/PRDs, …).
+        run: python shared/scripts/lint_user_facing.py skills commands
+
       - name: Smoke-test shared scripts (--help)
         # Every shared script must expose a working --help.
         run: |

@@ -7,7 +7,7 @@ Run a BlazeMeter Performance test from start to finish and produce a concise pas
 
 ## Step 0 — Resolve and confirm context (account → workspace → project → test)
 
-This is the canonical Context Resolution step from `shared/conventions.md` §4. Always resolve and **display** the full context (with ids) before starting anything, so the user can confirm you're operating on the right test. **Don't assume:** the user may belong to multiple accounts, each with multiple workspaces/projects/tests, and the `blazemeter_user read` default is a suggestion to confirm, never a silent choice. Running the wrong test costs real test minutes and load — get this right first.
+Always resolve and **display** the full context (with ids) before starting anything, so the user can confirm you're operating on the right test. **Don't assume:** the user may belong to multiple accounts, each with multiple workspaces/projects/tests, and the `blazemeter_user read` default is a suggestion to confirm, never a silent choice. Running the wrong test costs real test minutes and load — get this right first.
 
 ### Step 0a — Identify the target test (two entry paths)
 

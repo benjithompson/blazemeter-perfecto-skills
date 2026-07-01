@@ -7,7 +7,7 @@ Compare two BlazeMeter executions — a **baseline** and a **candidate** — and
 
 ## Step 0 — Resolve and confirm context for BOTH executions (account → workspace → project → test → execution)
 
-This is the canonical Context Resolution step from `shared/conventions.md` §4, **applied twice** — once per execution. Always resolve and **display** the full context (with ids) for **both** the baseline and the candidate before diffing anything, so the user can confirm you're comparing the right two runs. **Don't assume:** the user may belong to multiple accounts, each with multiple workspaces/projects/tests, names collide across them, and the `blazemeter_user read` default is a suggestion to confirm, never a silent choice. A comparison against the wrong run is worse than no comparison.
+Context resolution here is **applied twice** — once per execution. Always resolve and **display** the full context (with ids) for **both** the baseline and the candidate before diffing anything, so the user can confirm you're comparing the right two runs. **Don't assume:** the user may belong to multiple accounts, each with multiple workspaces/projects/tests, names collide across them, and the `blazemeter_user read` default is a suggestion to confirm, never a silent choice. A comparison against the wrong run is worse than no comparison.
 
 ### Step 0a — Identify the two target executions (two entry paths)
 

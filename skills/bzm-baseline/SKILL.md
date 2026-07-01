@@ -5,9 +5,9 @@ description: Establish, update, resolve, and show the golden performance baselin
 
 Manage the **golden baseline** a BlazeMeter test's runs are compared against. This skill does four things: **pin** a specific execution as the baseline for a conversation, **resolve** the active baseline (the pinned id if present, otherwise the test's last passing run), maintain the committed **CI baseline file** `.blazemeter/baseline.json` (always showing the diff before writing), and **show** which execution is the current baseline and why, with its key KPIs so the user can sanity-check it.
 
-There are **two baseline representations** (ADR-0017), and this skill spans both:
-- **Interactive / conversational** — a pin is an explicit `execution_id` the user names for *this conversation* ("baseline against execution 98765"). Absent a pin, the baseline defaults to **the last passing run**, looked up live at call time. A pin is **conversational memory only — never persisted across sessions** (conventions §4.6).
-- **CI gate** — a **file the user commits**, `.blazemeter/baseline.json`, a flat map of `test_id → execution_id`. The gate skill *reads* it; this skill *writes/updates* it, producing a diff the user reviews and commits like any other change. This is the user's own version-controlled repo state — not the plugin caching account context — so it does not violate the no-stored-context rule (ADR-0017).
+There are **two baseline representations**, and this skill spans both:
+- **Interactive / conversational** — a pin is an explicit `execution_id` the user names for *this conversation* ("baseline against execution 98765"). Absent a pin, the baseline defaults to **the last passing run**, looked up live at call time. A pin is **conversational memory only — never persisted across sessions**.
+- **CI gate** — a **file the user commits**, `.blazemeter/baseline.json`, a flat map of `test_id → execution_id`. The gate skill *reads* it; this skill *writes/updates* it, producing a diff the user reviews and commits like any other change. This is the user's own version-controlled repo state — not this skill caching account context — so it does not violate the never-persist-context rule.
 
 The deterministic file and selection logic lives in a shared script — call it for those steps rather than hand-rolling JSON or sort order:
 
@@ -19,7 +19,7 @@ It exposes `resolve` (pinned-else-last-passing), `last-passing` (pick the most r
 
 ## Step 0 — Resolve and confirm context (account → workspace → project → test)
 
-This is the canonical Context Resolution step from `shared/conventions.md` §4. A baseline is meaningless without knowing exactly which test it belongs to, so always resolve and **display** the full context (with ids) before pinning, resolving, showing, or writing anything. **Don't assume:** the user may belong to multiple accounts, each with multiple workspaces/projects/tests, names collide across them, and the `blazemeter_user read` default is a suggestion to confirm, never a silent choice. Writing the wrong `test_id → execution_id` into a committed CI file is worse than doing nothing.
+A baseline is meaningless without knowing exactly which test it belongs to, so always resolve and **display** the full context (with ids) before pinning, resolving, showing, or writing anything. **Don't assume:** the user may belong to multiple accounts, each with multiple workspaces/projects/tests, names collide across them, and the `blazemeter_user read` default is a suggestion to confirm, never a silent choice. Writing the wrong `test_id → execution_id` into a committed CI file is worse than doing nothing.
 
 ### Step 0a — Identify the target test (two entry paths)
 
@@ -85,7 +85,7 @@ blazemeter_execution read  { execution_id: <id> }
 
 ## Step 3 — Resolve the active baseline
 
-Resolution order is **pin → committed CI file → last passing run** (ADR-0017):
+Resolution order is **pin → committed CI file → last passing run**:
 
 1. **Conversational pin** — if the user pinned an `execution_id` earlier in this conversation, that is the baseline. Done.
 2. **Committed CI file** — if a `.blazemeter/baseline.json` exists in the user's repo, read its entry for this `test_id`. Use the script (it parses, normalizes ids to strings, and surfaces a malformed file as an error rather than guessing):
@@ -137,7 +137,7 @@ python ${CLAUDE_PLUGIN_ROOT}/shared/scripts/bzm_baseline.py set \
 
 Then tell the user to **review and commit** `.blazemeter/baseline.json` like any other change — the file is theirs, version-controlled, and what the CI gate will read on the next push. Do not commit it for them.
 
-> **GitHub note:** this skill writes a local file the user commits; it does not push or open PRs. If a workflow needs to *post* a baseline change (PR comment, commit status), that is GitHub-MCP-first per conventions §5 — but this skill stops at the local file.
+> **GitHub note:** this skill writes a local file the user commits; it does not push or open PRs. If a workflow needs to *post* a baseline change (PR comment, commit status), do that with the GitHub MCP — but this skill stops at the local file.
 
 ## Output template
 
@@ -170,8 +170,8 @@ Account / Workspace / Project: <names + ids> (from Step 0)
 
 ## Gotchas
 
-- **Two representations, kept separate (ADR-0017).** A conversational pin and the committed CI file are different things and can diverge. A pin lives only for the conversation and is **never** written to disk; only an explicit "update the baseline file" touches `.blazemeter/baseline.json`. Don't conflate them.
-- **Never persist conversational context.** The committed baseline file is *the user's* repo state (test_id → execution_id) — fine to write when asked. Resolved **account/workspace/project** context is **not**: never cache it to disk (conventions §4.6, ADR-0012).
+- **Two representations, kept separate.** A conversational pin and the committed CI file are different things and can diverge. A pin lives only for the conversation and is **never** written to disk; only an explicit "update the baseline file" touches `.blazemeter/baseline.json`. Don't conflate them.
+- **Never persist conversational context.** The committed baseline file is *the user's* repo state (test_id → execution_id) — fine to write when asked. Resolved **account/workspace/project** context is **not**: never cache it to disk.
 - **Always diff before writing.** Show the unified diff (the `set` action prints it on a dry run) and get approval before `--write`. The skill never commits the file for the user.
 - **"Passing" is an explicit pass.** Last-passing selection counts only a clean pass verdict; `unset` (no criteria), `abort`, `error`, `noData`, and still-running runs are excluded — same posture as bzm-compare-runs. If `last-passing` returns null, there is no baseline to pick; say so rather than baselining a failed run.
 - **Completion before baselining.** Confirm `ended != null` on any candidate — a partial run's KPIs look artificially good or bad and would poison every future comparison.

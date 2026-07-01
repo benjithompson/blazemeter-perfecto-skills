@@ -138,7 +138,7 @@ tbody tr:hover { background: var(--brand-surface); }
   <div class="card" id="report-summary"></div>
 
   <!--
-    Two report kinds share this one template (ADR-0014: new report types are added at the
+    Two report kinds share this one template (new report types are added at the
     same data-model seam, not by forking the renderer). The model's `kind` selects which
     section group renders: "single" (default/absent) → the cross-run trend & regression view
     for ONE test; "portfolio" → the cross-test scorecard over MANY tests. The engine below
@@ -872,7 +872,7 @@ tbody tr:hover { background: var(--brand-surface); }
     buildHeader(model);
     buildContext(model);
     buildSummary(model);
-    // Dispatch on the data-model discriminator (the report-type seam, ADR-0014).
+    // Dispatch on the data-model discriminator (the report-type seam).
     if ((model.kind || "single") === "portfolio") renderPortfolio(model);
     else renderSingle(model);
   }
