@@ -16,4 +16,4 @@ not a template rewrite.
 Rejected: CDN-linked chart libs (break offline, not a clean single-file artifact) and pre-rendered
 static images (need a Python/matplotlib toolchain, non-interactive).
 
-Reports write to a configurable output directory (default `./blazemeter-reports/`).
+Reports write to a configurable output directory (default `./bzm-reports/`).

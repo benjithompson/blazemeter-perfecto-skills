@@ -5,7 +5,7 @@ House style for this repo (see `shared/conventions.md`):
 
   * the file must open with a `---` fence on line 1 (no stray characters, BOM, or
     blank lines before it — that is exactly the bug that shipped in the original
-    analyze-blazemeter-test skill);
+    bzm-analyze-test skill);
   * the frontmatter is flat `key: value` lines, closed by a second `---` fence;
   * `name` and `description` are required; `name` is kebab-case and matches the
     skill's directory name.

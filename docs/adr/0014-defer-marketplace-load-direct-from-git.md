@@ -3,7 +3,7 @@
 **Amends [ADR-0006](0006-distribution-plugin-marketplace.md).** While the plugin is still early and
 changing fast, it is consumed as a **skills-directory plugin** loaded **in place** from a local git
 checkout — symlink the repo into `~/.claude/skills/` and Claude Code discovers it as
-`blaze@skills-dir`. Publishing through the self-hosted marketplace is **deferred**
+`perforce@skills-dir`. Publishing through the self-hosted marketplace is **deferred**
 until the plugin is built out further; `.claude-plugin/marketplace.json` is kept ready for that.
 
 Why: a *marketplace* install is **version-pinned** — Claude Code clones the marketplace repo, copies
@@ -23,5 +23,5 @@ its developers. When the plugin matures and we want one-step install for outside
 ADR-0006 and re-enable the marketplace path (bump `version`, publish), at which point the
 version-pin discipline (DoD checkbox) applies again.
 
-Unchanged from ADR-0006: it's still a namespaced Claude Code plugin (`blaze:<skill>`),
+Unchanged from ADR-0006: it's still a namespaced Claude Code plugin (`perforce:<skill>`),
 still skill-centric (ADR-0002), still works across all Claude Code surfaces.

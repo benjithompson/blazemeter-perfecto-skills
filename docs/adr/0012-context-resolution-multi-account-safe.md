@@ -10,7 +10,7 @@ decision made for the user**. No skill silently resolves a level when more than 
 
 **Where it lives:** the behavior is encoded in `shared/conventions.md` §4 (the canonical prose every
 skill copies), enforced by a new §8 Definition-of-Done item, and mirrored in the reference skill
-`skills/analyze-blazemeter-test` Step 0. These three move together — the reference implementation and
+`skills/bzm-analyze-test` Step 0. These three move together — the reference implementation and
 the merge checklist must not contradict the house style.
 
 **The resolution model:**

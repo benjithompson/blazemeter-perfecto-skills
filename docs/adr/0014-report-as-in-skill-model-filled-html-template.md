@@ -1,7 +1,7 @@
 # Report renders from an in-skill, model-filled, self-contained HTML template (no local interpreter)
 
-The `blazemeter-report` skill produces its HTML by filling a **static, self-contained template
-shipped inside the skill** (`skills/blazemeter-report/assets/report-template.html`) with the Report
+The `bzm-report` skill produces its HTML by filling a **static, self-contained template
+shipped inside the skill** (`skills/bzm-report/assets/report-template.html`) with the Report
 data model, rather than shelling out to a Python renderer. The skill reads the template, replaces a
 single `{{REPORT_DATA_JSON}}` token with the model JSON (escaping `</` to `<\/` so a string value
 can't close the `<script>` tag), and writes the `.html`. The template's baked-in CSS, brand vars,

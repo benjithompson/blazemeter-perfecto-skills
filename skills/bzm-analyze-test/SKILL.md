@@ -1,5 +1,5 @@
 ---
-name: analyze-blazemeter-test
+name: bzm-analyze-test
 description: Analyze BlazeMeter test execution results over time as a QA Performance engineer. Use when asked to analyze, review, trend, or report on a BlazeMeter test's performance history, regressions, error patterns, or SLA compliance.
 ---
 

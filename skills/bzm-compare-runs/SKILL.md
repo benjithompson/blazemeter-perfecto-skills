@@ -1,5 +1,5 @@
 ---
-name: compare-blazemeter-runs
+name: bzm-compare-runs
 description: Compare two BlazeMeter executions (baseline vs candidate) — diff response-time percentiles, throughput, and error rate with magnitude and direction, flag regressions past a threshold, and emit a ship / no-ship verdict. Use when asked to compare two runs, check a candidate against a baseline, gate a release on a load test, or decide whether a run regressed.
 ---
 

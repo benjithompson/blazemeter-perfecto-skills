@@ -1,9 +1,9 @@
 ---
-name: blazemeter-daily-digest
+name: bzm-daily-digest
 description: Sweep every BlazeMeter test that ran across a workspace or project in a time window (default last 24h) and produce ONE cross-test scorecard — per-test pass/fail, regression vs each test's own baseline, ranked incidents, and a prioritized "what needs your eyes today" list. Use when asked for a daily/standup digest, a morning rollup, an overnight summary, or a "what broke since yesterday?" view across many tests at once.
 ---
 
-Produce the **daily digest**: one cross-test scorecard for an entire workspace or project over a window. Where `analyze-blazemeter-test` trends *one* test deeply and `triage-blazemeter-failure` diagnoses *one* run, this skill sweeps **every test that ran** in the window, judges each against **its own baseline** (not just absolute pass/fail), and rolls the whole portfolio up into a scoreboard, a ranked incident list, and a short "needs your eyes today" list. It is markdown/terminal-first — a scannable standup artifact, **not** a branded HTML report (reach for `blazemeter-report` when you want the shareable HTML).
+Produce the **daily digest**: one cross-test scorecard for an entire workspace or project over a window. Where `bzm-analyze-test` trends *one* test deeply and `bzm-triage-failure` diagnoses *one* run, this skill sweeps **every test that ran** in the window, judges each against **its own baseline** (not just absolute pass/fail), and rolls the whole portfolio up into a scoreboard, a ranked incident list, and a short "needs your eyes today" list. It is markdown/terminal-first — a scannable standup artifact, **not** a branded HTML report (reach for `bzm-report` when you want the shareable HTML).
 
 ## Step 0 — Resolve and confirm the *scope* (account → workspace → project), then enumerate its tests
 
@@ -96,7 +96,7 @@ Absolute pass/fail is not enough: a run can pass its criteria yet be **meaningfu
 
 ### 4a. Resolve the per-test baseline (pinned → CI file → last-passing)
 
-Reuse the baseline concept and the **shared script** from `blazemeter-baseline` / ADR-0017 — **do not** re-implement baseline logic. Resolution order, per test:
+Reuse the baseline concept and the **shared script** from `bzm-baseline` / ADR-0017 — **do not** re-implement baseline logic. Resolution order, per test:
 
 1. **Conversational pin** — if the user pinned a baseline `execution_id` for this test earlier in the conversation, use it.
 2. **Committed CI file** — if the repo has a `.blazemeter/baseline.json`, read its entry for this `test_id`:

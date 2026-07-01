@@ -1,6 +1,6 @@
 """Fixture-driven tests for the CI-scaffold generator (`bzm_ci_scaffold`).
 
-These exercise the deterministic half of the `blazemeter-ci-setup` skill with no
+These exercise the deterministic half of the `bzm-ci-setup` skill with no
 live BlazeMeter or GitHub calls — exactly the pieces ADR-0016 makes the skill
 responsible for:
 
