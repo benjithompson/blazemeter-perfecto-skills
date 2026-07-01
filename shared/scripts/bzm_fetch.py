@@ -21,6 +21,11 @@ Subcommands:
          (pins > committed file > last passing) -> compute KPI deltas and verdicts
          -> write the digest JSON to --out. Stdout is a five-line human summary.
 
+  run-pair  Compare exactly two executions (baseline vs candidate): fetch both
+         masters, summary KPIs, request stats, and anomaly status -> compute
+         per-KPI and per-endpoint deltas plus verdict inputs -> write ONE compact
+         compare JSON to --out. Stdout is a five-line human summary.
+
   history  One test's run history: list the test's executions, keep those
          overlapping [--from, --to) (same paging/stop rule and status buckets as
          sweep) -> fetch each KPI-bucket run's summary -> resolve the baseline
@@ -241,6 +246,40 @@ def summary_kpis(row: dict) -> dict:
         "rps_per_vu": (hits_avg / max_users) if max_users else None,
         "duration_s": row.get("duration"),
     }
+
+
+def label_kpis(row: dict, max_users: float | None = None) -> dict:
+    """Normalize an aggregate-report label row into the KPI shape `compute_deltas` takes.
+
+    `max_users` is the run-level achieved peak (from the summary ALL row) so a label's
+    throughput can be judged per-virtual-user when the two runs' load configs differ,
+    the same rule the run-level comparison applies. Rate is derived from
+    `errorsCount / samples` (the endpoint's `errorsRate` unit is undocumented).
+    """
+    samples = row.get("samples") or 0
+    errors = row.get("errorsCount") or 0
+    throughput = row.get("avgThroughput")
+    return {
+        "avg_ms": row.get("avgResponseTime"),
+        "p90_ms": row.get("90line"),
+        "p95_ms": row.get("95line"),
+        "p99_ms": row.get("99line"),
+        "samples": samples,
+        "throughput_rps": throughput,
+        "error_rate_pct": (100.0 * errors / samples) if samples else 0.0,
+        "max_users": max_users,
+        "rps_per_vu": (throughput / max_users) if (throughput is not None and max_users) else None,
+    }
+
+
+def label_rows(agg_payload: dict | None) -> dict[str, dict]:
+    """Index an aggregate-report payload by label name (skipping any ALL row)."""
+    rows: dict[str, dict] = {}
+    for row in (agg_payload or {}).get("result") or []:
+        name = row.get("labelName")
+        if name and name != "ALL":
+            rows[name] = row
+    return rows
 
 
 def pct_change(baseline: float | None, candidate: float | None) -> float | None:
@@ -809,6 +848,184 @@ def cmd_sweep(args, transport) -> int:
     return 0
 
 
+def _move_magnitude(move: dict | None) -> float:
+    """Comparable size of a worst-KPI move (pct when relative, points when from zero)."""
+    if not move:
+        return 0.0
+    if move.get("pct") is not None:
+        return abs(move["pct"])
+    return move.get("points", 0.0) or 0.0
+
+
+def _format_move(move: dict | None) -> str:
+    if not move:
+        return "none"
+    if move.get("pct") is not None:
+        return "%s %+.1f%%" % (move["kpi"], move["pct"])
+    return "%s +%.2f points (baseline was 0%%)" % (move["kpi"], move.get("points", 0.0))
+
+
+def cmd_run_pair(args, transport) -> int:
+    baseline_id, candidate_id = str(args.baseline_id), str(args.candidate_id)
+    if baseline_id == candidate_id:
+        print(
+            "error: --baseline-id and --candidate-id are both %s — a run cannot be "
+            "compared to itself; pick a different baseline execution" % baseline_id,
+            file=sys.stderr,
+        )
+        return 2
+
+    cov = Coverage()
+    sweeper = Sweeper(transport, cov, concurrency=4)
+    notes: list[str] = []
+
+    def fetch_side(side: str, master_id: str):
+        """One run's master + summary KPIs + request stats + anomaly status.
+
+        The master read is required (without it the run cannot be identified);
+        every sub-report degrades into coverage/notes instead of failing the compare.
+        """
+        try:
+            master = sweeper.t.get("/masters/%s" % master_id).get("result") or {}
+            cov.ok()
+        except Exception as exc:  # noqa: BLE001 - reported, compare aborts cleanly
+            cov.fail("master", "master:%s" % master_id, exc)
+            return None, {}
+        kpis = sweeper.fetch_summary(master_id)
+        if kpis is None:
+            notes.append("%s_kpis_unavailable" % side)
+        agg = sweeper.fetch_optional(
+            "/masters/%s/reports/aggregatereport/data", "request_stats", master_id
+        )
+        if agg is None:
+            notes.append("%s_request_stats_unavailable" % side)
+        run = {
+            "execution_id": master_id,
+            "name": master.get("name"),
+            "test_id": str(master["testId"]) if master.get("testId") is not None else None,
+            "report_status": str(master.get("reportStatus") or "unset"),
+            "created": master.get("created"),
+            "ended": master.get("ended"),
+            "still_running": not master.get("ended"),
+            "kpis": kpis,
+        }
+        if run["still_running"]:
+            notes.append("%s_still_running" % side)
+        if not args.no_anomalies:
+            payload = sweeper.fetch_optional(
+                "/masters/%s/anomalies/stats", "anomalies", master_id
+            )
+            run["anomaly_status"] = anomaly_status(payload)
+        return run, label_rows(agg)
+
+    baseline, b_labels = fetch_side("baseline", baseline_id)
+    candidate, c_labels = fetch_side("candidate", candidate_id)
+    missing = [i for i, r in ((baseline_id, baseline), (candidate_id, candidate)) if r is None]
+    if missing:
+        print(
+            "error: could not read execution %s — check the id and your access"
+            % " and ".join(missing),
+            file=sys.stderr,
+        )
+        return 3
+
+    # Run-level KPI deltas: only when BOTH summaries yielded load KPIs. A zero-hit
+    # or null summary row means "no KPIs to compare", never a fabricated clean 0%.
+    deltas = (
+        compute_deltas(candidate["kpis"], baseline["kpis"])
+        if baseline["kpis"] and candidate["kpis"]
+        else {}
+    )
+
+    # Per-endpoint deltas where the label exists in both runs with samples.
+    matched = []
+    for name in sorted(set(b_labels) & set(c_labels)):
+        b_row, c_row = b_labels[name], c_labels[name]
+        if not (b_row.get("samples") and c_row.get("samples")):
+            continue
+        b_k = label_kpis(b_row, (baseline["kpis"] or {}).get("max_users"))
+        c_k = label_kpis(c_row, (candidate["kpis"] or {}).get("max_users"))
+        d = compute_deltas(c_k, b_k)
+        matched.append(
+            {
+                "label": name,
+                "baseline": b_k,
+                "candidate": c_k,
+                "deltas": d,
+                "worst_kpi_move": worst_kpi_move(d),
+            }
+        )
+    matched.sort(key=lambda e: -_move_magnitude(e["worst_kpi_move"]))
+    endpoints = {
+        "matched": matched,
+        "baseline_only": sorted(set(b_labels) - set(c_labels)),
+        "candidate_only": sorted(set(c_labels) - set(b_labels)),
+    }
+
+    adverse = sorted(k for k, d in deltas.items() if d.get("adverse"))
+    load_differs = bool(
+        baseline["kpis"]
+        and candidate["kpis"]
+        and baseline["kpis"].get("max_users")
+        and candidate["kpis"].get("max_users")
+        and baseline["kpis"]["max_users"] != candidate["kpis"]["max_users"]
+    )
+    verdict_inputs = {
+        "baseline_report_status": baseline["report_status"],
+        "candidate_report_status": candidate["report_status"],
+        "candidate_failed_while_baseline_passed": (
+            candidate["report_status"] == "fail" and baseline["report_status"] == "pass"
+        ),
+        "adverse_kpi_moves": adverse,
+        "worst_kpi_move": worst_kpi_move(deltas),
+        "regressed": bool(adverse),
+        "load_config_differs": load_differs,
+        "endpoints_with_adverse_moves": [
+            e["label"] for e in matched if any(d.get("adverse") for d in e["deltas"].values())
+        ],
+    }
+
+    compare = {
+        "schema_version": SCHEMA_VERSION,
+        "baseline": baseline,
+        "candidate": candidate,
+        "kpi_deltas": deltas,
+        "endpoints": endpoints,
+        "verdict_inputs": verdict_inputs,
+        "notes": notes,
+        "coverage": {
+            "http_attempted": cov.attempted,
+            "http_failed": cov.failed,
+            "failures": cov.failures[:50],
+        },
+    }
+    out = Path(args.out)
+    out.write_text(json.dumps(compare, indent=2) + "\n", encoding="utf-8")
+
+    print(
+        "run-pair: baseline %s (%s) vs candidate %s (%s)"
+        % (baseline_id, baseline["report_status"], candidate_id, candidate["report_status"])
+    )
+    print(
+        "kpis: baseline %s | candidate %s | load config %s"
+        % (
+            "ok" if baseline["kpis"] else "unavailable",
+            "ok" if candidate["kpis"] else "unavailable",
+            "differs (throughput judged per-VU)" if load_differs else "matches",
+        )
+    )
+    print(
+        "adverse moves: %s | worst: %s"
+        % (", ".join(adverse) if adverse else "none", _format_move(verdict_inputs["worst_kpi_move"]))
+    )
+    print(
+        "coverage: %d/%d fetches ok (%d failed)"
+        % (cov.attempted - cov.failed, cov.attempted, cov.failed)
+    )
+    print("wrote %s" % out)
+    return 0
+
+
 def cmd_history(args, transport) -> int:
     """One test's windowed run history -> per-run KPI/delta series JSON at --out."""
     from_ts, to_ts = parse_when(args.from_), parse_when(args.to)
@@ -1054,6 +1271,16 @@ def main(argv: list[str] | None = None) -> int:
     _add_scope_args(p_sweep)
     _add_window_args(p_sweep, out_help="path for the digest JSON")
     p_sweep.set_defaults(func=cmd_sweep)
+
+    p_pair = sub.add_parser(
+        "run-pair",
+        help="Compare two executions (baseline vs candidate) -> compact compare JSON at --out.",
+    )
+    p_pair.add_argument("--baseline-id", required=True, help="baseline execution (master) id")
+    p_pair.add_argument("--candidate-id", required=True, help="candidate execution (master) id")
+    p_pair.add_argument("--out", required=True, help="path for the compare JSON")
+    p_pair.add_argument("--no-anomalies", action="store_true", help="skip anomaly-stats fetches")
+    p_pair.set_defaults(func=cmd_run_pair)
 
     p_history = sub.add_parser(
         "history",

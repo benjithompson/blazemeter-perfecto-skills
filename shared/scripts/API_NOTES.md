@@ -34,6 +34,7 @@ Params: `limit` (documented max **50**), `skip` (offset), `sort[]=-updated`
 | Tests of project   | `/tests`                                        | `projectId` (only — no workspaceId variant) |
 | Project read       | `/projects/{id}`                                | —                     |
 | Executions of test | `/masters`                                      | `testId`              |
+| Execution read     | `/masters/{id}`                                 | — (used by `run-pair`)|
 | Summary report     | `/masters/{id}/reports/default/summary`         | —                     |
 | Errors report      | `/masters/{id}/reports/errorsreport/data`       | —                     |
 | Request stats      | `/masters/{id}/reports/aggregatereport/data`    | —                     |
@@ -44,7 +45,8 @@ Params: `limit` (documented max **50**), `skip` (offset), `sort[]=-updated`
 - **Master (execution)**: `id`, `name`, `created`, `updated`, `ended` — **epoch
   seconds**; `ended == null` means still running. Verdict field is **`reportStatus`**
   ∈ `pass | fail | unset | abort | error | noData` (default `unset`). Archived flag:
-  `dumped`.
+  `dumped`. The single read `/masters/{id}` returns the same shape plus `testId`
+  (which the engine surfaces as `test_id` in `run-pair` output when present).
 - **Summary**: `result.summary[]`; take the aggregate row where `id == "ALL"` (or
   `lb == "ALL"`). Fields: `hits`, `failed`, `avg`, `min`, `max`, `median`, `tp90`,
   `tp95`, `tp99`, `hits_avg` (throughput/s), `duration` (s), `maxUsers` (fallback
