@@ -5,13 +5,15 @@ description: Sweep every BlazeMeter test that ran across an account (or a chosen
 
 Produce the **daily digest**: one cross-test scorecard for a whole account — or a chosen workspace/project — over a window. Where `bzm-analyze-test` trends *one* test deeply and `bzm-triage-failure` diagnoses *one* run, this skill sweeps **every test that ran** in the window, judges each against **its own baseline** (not just absolute pass/fail), and rolls the whole portfolio up into a scoreboard, a ranked incident list, and a short "needs your eyes today" list. It is markdown/terminal-first — a scannable standup artifact, **not** a branded HTML report (reach for `bzm-report` when you want the shareable HTML).
 
-## Step 0 — Resolve the account, ask the user the rollup scope, then enumerate its tests
+**Division of labor (important):** the MCP is used for the *control plane* — resolving the account/scope interactively, the AI-consent gate, and any after-digest drill-in on a single run. The *bulk data pull* (every test's executions, every run's reports) is **never** done by chaining MCP calls — at real account sizes that is thousands of payloads. It is handed off to the deterministic engine at `${CLAUDE_PLUGIN_ROOT}/shared/scripts/bzm_fetch.py`, which sweeps the BlazeMeter API directly, does all the arithmetic (window filtering, baseline resolution, KPI deltas, normalization), and returns one compact pre-aggregated JSON. You read only that JSON and write the narrative.
 
-This is the **cross-test** variant of Context Resolution. A digest operates over **many tests at once**, so it resolves the **account**, then **asks the user how wide to roll up** — the **whole account** (every workspace → project → test), a **single workspace**, or a **single project** — and enumerates the tests in that chosen scope. It **never assumes** the breadth and never narrows to a single test. **Don't assume:** the user may belong to multiple accounts, names collide across them, and the `blazemeter_user read` default is a suggestion to confirm, never a silent choice.
+## Step 0 — Resolve the account, ask the user the rollup scope, then census the tests
+
+This is the **cross-test** variant of Context Resolution. A digest operates over **many tests at once**, so it resolves the **account**, then **asks the user how wide to roll up** — the **whole account** (every workspace → project → test), a **single workspace**, or a **single project**. It **never assumes** the breadth and never narrows to a single test. **Don't assume:** the user may belong to multiple accounts, names collide across them, and the `blazemeter_user read` default is a suggestion to confirm, never a silent choice.
 
 ### Step 0a — Resolve the account (tiered pick rule)
 
-Resolve **only the account** here — which workspaces/projects you enumerate depends on the scope the user picks in Step 0b. Apply the uniform tiered pick rule to the account:
+Resolve **only the account** here — which workspaces/projects are swept depends on the scope the user picks in Step 0b. Apply the uniform tiered pick rule to the account:
 
 - Start from the `blazemeter_user read` default account, but **don't assume it's unambiguous — enumerate to see how many accounts exist**: exactly one → **display** it and proceed; more than one → present the pick and **stop** for the user's choice (never silently take the default).
 - To enumerate, list one page (`blazemeter_account list`, `limit: 50`).
@@ -31,21 +33,22 @@ Offer **whole account** as the natural default for a "daily digest", but let the
 
 ### Step 0c — AI Consent gate
 
-Check the resolved **account's** AI-consent state via `blazemeter_account read`. If the account has **not** consented, **stop with a clear message** — e.g. `Account Acme (12345) has not enabled AI consent` — before enumerating or fetching anything.
+Check the resolved **account's** AI-consent state via `blazemeter_account read`. If the account has **not** consented, **stop with a clear message** — e.g. `Account Acme (12345) has not enabled AI consent` — before invoking the engine or fetching anything. (The consent gate lives here, in the MCP step, on purpose — it must pass **before** any bulk pull runs.)
 
-### Step 0d — Enumerate the tests in the chosen scope
+### Step 0d — Census the scope with `plan` (the practicality checkpoint)
 
-Enumerate to completion over whatever scope was picked in 0b — a full first page is **not** a reason to ask the user to name one test; keep paging:
+Do **not** enumerate tests by paging MCP lists — run the engine's fast census instead. It counts workspaces/projects/tests using one cheap request per level and prints a small JSON to stdout:
 
-- **Whole account** → for **each workspace** in the account (page `blazemeter_workspaces list`), list its projects (`blazemeter_project list`), then each project's tests (`blazemeter_tests list`, `offset` by 50). Parallelize across workspaces/projects.
-- **Workspace** → each project in the workspace → its tests.
-- **Project** → `blazemeter_tests list { project_id: <id> }` to completion.
+```bash
+python ${CLAUDE_PLUGIN_ROOT}/shared/scripts/bzm_fetch.py plan --account-id <id>
+# or:  --workspace-id <id>   |   --project-id <id>     (exactly one scope flag)
+```
 
-Capture each test's `test_id`, name, **and its workspace/project** so an account-wide scoreboard can group by workspace.
+The engine reads the **same credentials the MCP uses** from the environment — `API_KEY_ID` + `API_KEY_SECRET`, or `BLAZEMETER_API_KEY` (a path to a JSON key file). Never pass keys on the command line. If it exits with a credentials error, show the user which variables to set and stop.
 
-**Practicality guard:** a whole-account sweep of a **large account** (the first `blazemeter_workspaces list` page comes back full → >50 workspaces, or the test count runs into the hundreds) is heavy — **say so up front**, show how many workspaces/tests are in play, and offer to **narrow to specific workspaces/projects** or to proceed with the full sweep. Never silently truncate to the first page.
+**Practicality guard:** show the census to the user. A large sweep (tens of workspaces, hundreds of tests) is heavy on wall-clock even for the engine — say how many workspaces/tests are in play and offer to **narrow to specific workspaces/projects** or proceed with the full sweep. Never silently truncate the scope.
 
-### Step 0e — Display the resolved scope and the test count, then continue
+### Step 0e — Display the resolved scope and the census, then continue
 
 Display the cross-test context block before acting, so the run is auditable:
 
@@ -61,103 +64,51 @@ Carry this resolved scope forward as **conversational memory** for later skills 
 
 ## Step 1 — Resolve the window
 
-Default to the **last 24 hours** ending now. Let the user override in natural language — "since yesterday", "last 3 days", "this week", or an explicit date range ("2026-06-20 to 2026-06-26"). Compute a concrete `[from, to]` timestamp pair and **display it** (in Step 0e's block) so the user can see exactly what counts as "today". Everything downstream filters runs by `start_time`/`end_time` falling inside this window.
+Default to the **last 24 hours** ending now. Let the user override in natural language — "since yesterday", "last 3 days", "this week", or an explicit date range ("2026-06-20 to 2026-06-26"). Compute a concrete `[from, to]` timestamp pair and **display it** (in Step 0e's block) so the user can see exactly what counts as "today".
 
-## Step 2 — For each test, list the runs that fall in the window
+## Step 2 — Run the sweep
 
-For every test enumerated in Step 0d, list its executions and keep only those that **overlap the window**:
+One engine invocation does the whole bulk pull and all the deterministic judgment — listing each test's executions, keeping runs that overlap the window, fetching each kept run's reports, resolving each test's baseline, and computing the KPI deltas:
 
-```
-blazemeter_execution list  { test_id: <id>, limit: 50, offset: 0 }
-```
-
-- **Pagination:** the `list` action maxes at 50 per call. Executions come back newest-first; page by `offset` only until you pass the start of the window (once a page's runs are all older than `from`, you can stop paging that test).
-- Keep runs whose `start_time`/`end_time` fall within `[from, to]`. Capture per run: `execution_id`, `start_time`/`end_time`, and `status` (`execution_status`).
-- **Statuses to skip (like `analyze`):** only roll up `ENDED`/`PASSED`/`FAILED` runs. **Skip `TERMINATED` and `ERROR`** — they have incomplete data that would distort the scorecard. Count them separately as "skipped (partial)" so the digest is honest about what it didn't read, but don't fold their KPIs in.
-- A test with **no runs in the window** is simply absent from the scoreboard's active rows (note the count of idle tests in the summary — see Step 5).
-
-These per-test list calls are **independent — parallelize them** across tests to keep wall-clock time reasonable on a large scope.
-
-## Step 3 — For each in-window run, fetch its KPIs and anomalies
-
-For each in-scope run (an `ENDED`/`PASSED`/`FAILED` execution inside the window), fetch in **parallel** — both per run, and across runs/tests, since every fetch is independent:
-
-```
-blazemeter_execution read_all_reports     { execution_id: <id> }   # summary / errors / request_stats
-blazemeter_execution read_anomalies_stats { execution_id: <id> }   # anomaly detection status
+```bash
+python ${CLAUDE_PLUGIN_ROOT}/shared/scripts/bzm_fetch.py sweep \
+  --account-id <id> \                       # or --workspace-id / --project-id (exactly one)
+  --from 2026-06-30T09:00:00Z --to 2026-07-01T09:00:00Z \
+  --baseline-file .blazemeter/baseline.json \   # only if the user's repo has one
+  --pins <scratch>/pins.json \                  # only if the user pinned baselines this conversation
+  --out <scratch>/digest.json
 ```
 
-`read_all_reports` returns three sub-reports (same shape `analyze` uses):
-- **summary** — aggregate KPIs: avg / p90 / p95 / p99 response time, throughput (RPS), error rate %, achieved peak concurrency, bandwidth.
-- **errors** — error breakdown by type, count, and %.
-- **request_stats** — per-endpoint (label) KPIs.
+- **`--baseline-file`** — pass the user's committed `.blazemeter/baseline.json` when the repo has one; its entries (a flat `{test_id: execution_id}` map) pin those tests' baselines.
+- **`--pins`** — if the user pinned a baseline for specific tests earlier **in this conversation**, write those as a small JSON map `{"<test_id>": "<execution_id>"}` to a scratch file and pass it. Pins outrank the committed file. Omit otherwise.
+- Baseline precedence per test is applied inside the engine: **conversational pin → committed file → last passing run** (from the test's own history, which may legitimately predate the window). A test with no passing run gets `"source": "none"` — no baseline is invented.
+- Stdout is a **five-line summary** (tests swept, failures/regressions, fetch coverage, output path) — show it to the user as progress. The full result is the JSON at `--out`.
+- **Exit codes:** `0` success; `2` usage/credentials (tell the user what to set/fix); `3` scope-level failure **or** too many fetch failures (default threshold 20%, tune with `--max-failure-rate`). On `3` the JSON may still exist — its `coverage` block says exactly what's missing; report the digest as **partial**, never as complete.
 
-`read_anomalies_stats` returns `anomaly_detection_status` ∈ `no_anomalies | anomalies_with_details | statistics_unavailable`, with per-anomaly detail (KPI + window) when present.
+## Step 3 — Read the digest JSON and judge severity
 
-> **Parallelism note (like `analyze`):** these are independent per execution **and** across executions/tests — fan them out in parallel rather than serially, or a multi-test window can take a long time.
+Read `--out`. It is compact — one entry per test that ran (idle tests are only counted). Everything numeric is already computed; **do not recompute or second-guess the arithmetic**. Per test you get:
 
-## Step 4 — Judge each test against ITS OWN baseline (the crucial step)
+- run counts: `runs_in_window`, `kpi_runs`, `passed` / `failed`, `skipped_partial` (aborted/errored runs whose KPIs were deliberately not folded in), `inconclusive`, `still_running`;
+- `baseline` (`source`: `pin | file | last-passing | none`, and the execution id), `candidate_execution_id` (the newest failing run if any failed, else the newest run);
+- `deltas` vs baseline (avg/p95/p99/throughput/error-rate, each with a `pct` and an `adverse` flag — adverse means a ≥10% move in the worse direction; throughput is judged per-virtual-user when the load config changed, flagged `normalized_per_vu`), `worst_kpi_move`, `regressed`;
+- `notes` (`baseline_is_only_run`, `no_baseline`, `baseline_kpis_unavailable`, `candidate_kpis_unavailable` — the last also covers run types with no load KPIs, e.g. GUI/EUX runs), `anomaly_status`, and `incident_candidates` — the raw material for the incident list (`failure`, `regression`, `error_spike`, `endpoint_error_spike`, `anomaly`).
 
-Absolute pass/fail is not enough: a run can pass its criteria yet be **meaningfully slower than the test's golden baseline**, and that newly-regressed-but-still-green case is exactly what a daily digest exists to surface. So for **each test** that ran in the window, resolve **that test's own baseline** and compare its in-window run(s) against it.
+Your contribution is **judgment and prose**, ranking the incident candidates across all tests by severity:
 
-### 4a. Resolve the per-test baseline (pinned → CI file → last-passing)
-
-Reuse the baseline concept and the **shared script** from `bzm-baseline` — **do not** re-implement baseline logic. Resolution order, per test:
-
-1. **Conversational pin** — if the user pinned a baseline `execution_id` for this test earlier in the conversation, use it.
-2. **Committed CI file** — if the repo has a `.blazemeter/baseline.json`, read its entry for this `test_id`:
-
-   ```
-   python ${CLAUDE_PLUGIN_ROOT}/shared/scripts/bzm_baseline.py resolve \
-     --file .blazemeter/baseline.json --test-id <test_id>
-   ```
-
-   It prints `{"source": "pinned", "execution_id": "<id>"}` when the file has an entry. A **malformed** file exits non-zero — report that for that test and fall through to last-passing only if the user is fine with it; don't silently swallow it.
-3. **Last-passing run** — with no pin and no file entry, default to the test's most recent passing run. Build a JSON list of the test's executions (from Step 2, paging further back than the window if the window itself contains no pass — the baseline can predate the window) with `id`, `status`, `end_time`, and let the script choose:
-
-   ```
-   python ${CLAUDE_PLUGIN_ROOT}/shared/scripts/bzm_baseline.py last-passing \
-     --executions <executions.json>
-   ```
-
-   If it returns `null`, this test has **no passing run to baseline against** — mark its regression column **"no baseline"** rather than inventing one, and lean on its absolute pass/fail instead.
-
-Read the resolved baseline's KPIs once per test with `blazemeter_execution read_all_reports { execution_id: <baseline_id> }` (the **summary** sub-report) — that's the reference the window's runs are measured against. Don't compare a run to itself: if the only in-window run *is* the resolved last-passing baseline, there's nothing to regress against yet — note it as "baseline run, no prior to compare".
-
-### 4b. Compute the regression verdict per test
-
-For each test, compare its **most significant in-window run** (the newest, or the worst if several ran) against its baseline summary KPIs, using the same **≥ 10% KPI move** heuristic `analyze` uses:
-
-- Compute the % change for avg RT, p95 RT, p99 RT, throughput (RPS, inverted — *lower* is worse), and error rate.
-- A test is **newly-regressed** if any tracked KPI moved **≥ 10%** in the worse direction vs its baseline. Record the **worst KPI move** (the single largest adverse % change, named — e.g. `p95 +34%`) for the scoreboard.
-- **Normalize for load-config changes:** if a run's concurrency/duration differs from the baseline, raw RPS isn't comparable — normalize throughput to **RPS per virtual user** before judging it, and note the normalization (don't flag a regression that is really just a smaller load).
-- A run that **fails its criteria** is a regression regardless of KPI deltas — failure always lands on the scoreboard.
-
-## Step 5 — Roll the portfolio up
-
-Synthesize Steps 2–4 into the three rollups:
-
-### 5a. Scoreboard
-One row per test that ran in the window: `# runs`, overall `pass/fail` (e.g. `3/4 passed`), **newly-regressed?** (vs the test's own baseline), and **worst KPI move** (named). Sort the worst offenders to the top (failures first, then largest regressions).
-
-### 5b. Top incidents — ranked by severity
-Pull the notable signals across **all** tests into one ranked list. Rank by severity using this order (it mirrors `triage`'s systemic-vs-noise framing applied portfolio-wide):
-
-1. **Outright failures** — a run that failed its criteria (or `abort`/`error` status within the data you kept). Highest severity.
+1. **Outright failures** — a run that failed its criteria. Highest severity.
 2. **Large regressions vs baseline** — a still-green run that moved a KPI well past 10% (the bigger the move and the more tests affected, the higher).
-3. **Error-rate spikes** — a run whose overall error rate crossed a meaningful bar (e.g. > 1%, and especially > 5%), or an endpoint at a near-100% error rate even at low traffic.
-4. **Anomalies** — `anomalies_with_details` runs; weight a KPI/window that recurs across **multiple tests or runs** as **systemic** (higher) over a lone one-off (lower / likely noise).
+3. **Error-rate spikes** — overall error rate past 1% (and especially past 5%), or an endpoint erroring at near-100% even on modest traffic.
+4. **Anomalies** — weight a KPI/label that recurs across **multiple tests or runs** as **systemic** (higher) over a lone one-off (lower / likely noise).
 
-For each incident name the **test, run, the metric, and baseline-vs-now numbers** so it's actionable. Treat `statistics_unavailable` as **insufficient data, not a finding** (never an incident); call out `noData`/`unset` runs as inconclusive rather than as clean.
+Treat `statistics_unavailable` as **insufficient data, not a finding** (never an incident, never "clean"); `inconclusive` runs are inconclusive, not green.
 
-### 5c. What needs your eyes today
-A short (3–7 item) **prioritized** list distilled from the incidents — the single highest-leverage things a person should look at this morning, each one line, ordered by severity, each pointing at the test/run and why. This is the "if you read nothing else" section.
+## Step 4 — Handle the edge cases gracefully
 
-## Step 6 — Handle the edge cases gracefully
-
-- **Empty window (nothing ran):** if **no** test in scope had an in-window `ENDED`/`PASSED`/`FAILED` run, **do not** fabricate a scoreboard. Emit the short empty-window form: confirm the scope and window, state plainly that **nothing ran in this window**, note how many tests are in scope (and, if useful, when each last ran), and stop. An empty digest is a valid, useful answer — say it clearly.
-- **Partial-data / non-ENDED runs:** `TERMINATED`/`ERROR` runs are skipped from KPIs (Step 2) but **counted** as "skipped (partial)" in the summary so the digest is honest about coverage.
-- **No baseline for a test:** mark its regression column "no baseline" and fall back to absolute pass/fail — don't guess.
+- **Empty window (nothing ran):** `tests_ran: 0` → **do not** fabricate a scoreboard. Emit the short empty-window form: confirm the scope and window, state plainly that **nothing ran in this window**, note how many tests are in scope, and stop. An empty digest is a valid, useful answer.
+- **Partial coverage:** surface the `coverage` block honestly — skipped partial runs, failed fetches (with counts), anomaly stats unavailable. Never present a partial sweep as complete.
+- **No baseline for a test:** its regression column reads "no baseline"; judge it on absolute pass/fail only.
+- **Drill-ins stay interactive:** when the user asks about one incident ("what happened in run 9101?"), that is a *single-run* question — answer it with the MCP (`blazemeter_execution read`, `read_all_reports`, `read_anomalies_stats` for **that** execution id, or hand off to `bzm-triage-failure`). Don't re-run the sweep for it.
 
 ## Output template
 
@@ -175,20 +126,20 @@ A short (3–7 item) **prioritized** list distilled from the incidents — the s
 |------|------|-----------|------------------|----------------|-----------------|
 | <test name> (id) | 4 | 3/4 | ⚠ yes | p95 +34% vs baseline | last-passing |
 | ...              |   |     | ok    | —                    | committed file  |
-(failures first, then largest regressions; idle tests omitted here — see footer)
+(failures first, then largest regressions — the JSON is already sorted this way; idle tests omitted here — see footer)
 
 ### Top incidents (ranked by severity)
 1. **[FAIL]** <test> run <exec_id> — failed criteria; error rate 26.7% (baseline 0.4%).
 2. **[REGRESSION]** <test> run <exec_id> — p95 480ms → 642ms (+34%) vs baseline <baseline_id>; still green.
 3. **[ERROR SPIKE]** <test> run <exec_id> — /checkout 98% errors on 120 samples.
-4. **[ANOMALY · systemic]** <KPI/window> recurred across <N> tests.
+4. **[ANOMALY · systemic]** <KPI/label> recurred across <N> tests.
 ...
-(skip statistics_unavailable as a finding; mark noData/unset runs inconclusive)
 
 ### Coverage notes
-- Idle tests (no run in window): <N> (<names or "list on request">)
-- Skipped (partial/non-ENDED) runs: <N> — TERMINATED/ERROR, KPIs not read
+- Idle tests (no run in window): <N>
+- Skipped (partial/aborted) runs: <N> — KPIs not folded in
 - Tests with no baseline: <N> — judged on absolute pass/fail only
+- Fetch coverage: <ok>/<attempted> (<failed> failed)   ← only when failures > 0
 - Normalized for load-config change: <tests, if any>
 ```
 
@@ -204,14 +155,13 @@ Nothing ran in this window. No executions to report.
 
 ## Gotchas
 
-- **Ask the scope; then enumerate, don't narrow to one test.** Step 0 resolves the **account**, **asks** the user the rollup breadth (whole account / a workspace / a project — never assumed), and enumerates every test in it — a full first page of `blazemeter_tests list` means "keep paging", **not** "ask the user to name one test". A whole-account sweep of a large account (>50 workspaces / hundreds of tests) is the one case to flag up front and offer to narrow.
-- **Pagination.** Every `list` action (`workspaces`, `project`, `tests`, `execution`) maxes at **50 per page** — page by `offset`. For executions, stop paging a test once a page is entirely older than the window's `from`.
-- **Statuses to skip.** Roll up only `ENDED`/`PASSED`/`FAILED`. **Skip `TERMINATED`/`ERROR`** (incomplete data) — count them as "skipped (partial)", never fold their KPIs into the scoreboard.
-- **Load-config normalization.** If concurrency/duration changed between a run and its baseline, raw RPS isn't comparable — normalize to RPS-per-virtual-user before flagging a throughput regression, and say you did.
-- **`statistics_unavailable` is not a finding.** It means the run was too short for the anomaly engine to build a baseline — insufficient data, never reported as "anomalies detected" or as a clean run. Likewise `noData`/`unset` runs are inconclusive, not green.
-- **Per-test baseline caveats.** The baseline is resolved **per test** (pinned → committed `.blazemeter/baseline.json` → last-passing) via the shared `bzm_baseline.py` — don't re-implement that logic, and don't share one baseline across tests. If `last-passing` returns `null`, the test has **no baseline**: mark it "no baseline" and fall back to absolute pass/fail rather than inventing a reference. A baseline may legitimately predate the window, so page execution history further back than the window when the window itself contains no passing run. A malformed committed file exits non-zero — surface it, don't silently swallow it.
-- **Don't compare a run to itself.** If a test's only in-window run *is* its resolved last-passing baseline, there's no prior to regress against — note "baseline run" rather than reporting a 0% (or spurious) move.
-- **Failure criteria live on the test, not the execution.** `blazemeter_execution read` returns only the overall `execution_status`; the per-criterion thresholds and readable labels live on the **test object** (`blazemeter_tests read` → `failure_criteria.rules[]` + `meta.*`). At digest altitude, lead with the overall verdict and the KPI-vs-baseline deltas; reach into the test object's criteria only when explaining *why* a specific run failed.
-- **MCP-first.** Every retrieval here is a `blazemeter_*` MCP action (`*_list`, `*_read`, `read_all_reports`, `read_anomalies_stats`); no REST v4 fallback is needed. Only a genuine MCP gap would justify a documented REST call.
-- **Parallelize.** Per-test execution lists, and per-execution `read_all_reports` + `read_anomalies_stats`, are all independent — fan them out in parallel; a serial sweep over a whole workspace is needlessly slow.
-- **Never persist scope.** The resolved account/workspace/project is conversational memory only — carried forward within the conversation, never written to disk. The committed `.blazemeter/baseline.json` is the user's own repo state and a different thing.
+- **Never do the bulk pull over MCP.** Chaining `blazemeter_*` list/read calls per test and per execution burns enormous time and tokens at real account sizes and is exactly what the engine exists for. MCP is for Step 0's interactive picks, the consent gate, and single-run drill-ins afterward — nothing in between.
+- **Ask the scope; census, don't narrow to one test.** Step 0 resolves the **account**, **asks** the rollup breadth (whole account / a workspace / a project — never assumed), and runs `plan` for the census. A big census is a reason to *offer narrowing*, never to silently truncate.
+- **Consent before sweep.** The AI-consent check (Step 0c) must pass before any `plan`/`sweep` invocation — the gate lives in the MCP layer, and the engine assumes it already happened.
+- **Credentials are environment-only.** The engine reads `API_KEY_ID`/`API_KEY_SECRET` or `BLAZEMETER_API_KEY` (a key-file path) — the same variables the MCP uses. Never put a key on the command line, in the digest, or in the conversation.
+- **Trust the engine's arithmetic.** Deltas, normalization, baseline choice, and status buckets are computed deterministically and fixture-tested. Your job is severity ranking and narrative — if a number looks wrong, say so and show it; don't silently recompute.
+- **The engine already excludes partial runs.** Aborted/errored runs are counted (`skipped_partial`) but their KPIs never fold into the scoreboard — keep the digest honest by reporting the count.
+- **`statistics_unavailable` is not a finding.** It means anomaly stats couldn't be read (run too short, or the stats endpoint unavailable) — insufficient data, never "anomalies detected" and never a clean bill.
+- **Don't compare a run to itself.** A green run is never its own baseline — last-passing resolution excludes the candidate, so a still-green regression is detectable whenever any prior pass exists. `baseline_is_only_run` in a test's notes means a *pinned* baseline (conversational or committed file) points at the candidate itself — report "baseline run, no prior to compare", not a 0% move.
+- **Failure criteria live on the test, not the execution.** At digest altitude, lead with the overall verdict and the deltas; reach into `blazemeter_tests read` (failure criteria + labels) only when explaining *why* a specific run failed during a drill-in.
+- **Never persist scope.** The resolved account/workspace/project is conversational memory only. The committed `.blazemeter/baseline.json` is the user's own repo state and a different thing. Scratch files (`pins.json`, `digest.json`) go in the session scratch directory, not the user's repo.

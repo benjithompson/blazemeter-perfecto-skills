@@ -199,14 +199,23 @@ The variant **reuses every guarantee** of the single-test step — it changes on
 In short: single-test skills resolve **to a test**; cross-test skills resolve **to a scope and
 enumerate its tests**. Same don't-assume guarantees, one fewer level of narrowing.
 
-## 5. Integration: MCP-first, REST as a documented fallback
+## 5. Integration: MCP for the control plane, deterministic scripts for bulk data pulls
 
-- Prefer the **BlazeMeter MCP** tools (`blazemeter_*`). The
-  [bzm-mcp repo](https://github.com/Blazemeter/bzm-mcp) is the source of truth for what the MCP
-  can do.
-- Fall back to the **BlazeMeter REST API v4** only to fill a genuine MCP gap, and when you do,
-  **say so and why** in the skill. Reason from the
-  [v4 explorer](https://a.blazemeter.com/api/v4/explorer/), not from memory.
+- Prefer the **BlazeMeter MCP** tools (`blazemeter_*`) for the **control plane**: Step 0 scope
+  resolution and its interactive picks, the AI-consent gate, anything that mutates, and
+  **single-object drill-ins** (one test, one execution's reports when the user asks about *that*
+  run). The [bzm-mcp repo](https://github.com/Blazemeter/bzm-mcp) is the source of truth for what
+  the MCP can do.
+- **Bulk data-plane reads go to the shared deterministic engine, not the MCP** (ADR-0019). The
+  line is **structural, decidable before the first call**: any *data-driven fan-out* — "for each
+  X, list/read Y" where the iteration count comes from data rather than from the user's pick —
+  runs via `shared/scripts/bzm_fetch.py`, which sweeps the REST API v4 directly and returns one
+  compact pre-aggregated JSON (size O(tests)). No "small scope, MCP is fine" branch: one code
+  path, fixture-tested. Chained MCP loops over tests/executions/reports are a review flag.
+- The engine's REST usage is governed by `shared/scripts/API_NOTES.md` (distilled from the
+  bzm-mcp source + the [v4 explorer](https://a.blazemeter.com/api/v4/explorer/) — never from
+  memory, and never by vendoring the swagger). Any *other* REST call still needs a genuine MCP
+  gap, **said so and why** in the skill.
 - **GitHub integration is MCP-first too.** A skill that touches GitHub (PR comments, commit status)
   uses the **GitHub MCP**, mirroring the BlazeMeter posture above; `gh`/REST is only a documented
   fallback for a genuine gap. Generated CI artifacts (GitHub Actions YAML) are **secrets-only**:
@@ -256,7 +265,8 @@ Before a skill merges:
       the conversation without persisting it.
 - [ ] No personal absolute paths, no credentials, no machine-specific config anywhere.
 - [ ] Any shared script is in `shared/scripts/` and referenced via `${CLAUDE_PLUGIN_ROOT}`.
-- [ ] Uses MCP-first; any REST usage is justified in the prose.
+- [ ] MCP for control-plane, `bzm_fetch.py` for data-driven fan-outs (§5); any other REST usage
+      is justified in the prose.
 - [ ] Has an output template and a Gotchas section.
 - [ ] Any deterministic shared logic (e.g. the frontmatter linter) has fixture tests under `tests/`;
       the skill itself was run once against a real BlazeMeter test. A skill that ships a static asset
