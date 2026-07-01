@@ -1,0 +1,104 @@
+{
+  "comment": "Canned v4 responses for a run-pair compare. Baseline 5001: clean pass at 20 VU (0% errors). Candidate 5002: fails at 10 VU (half the load) with a 26.6% error rate — exercises RPS-per-VU normalization (per-VU throughput identical, so no throughput regression) and the error-rate-from-zero rule (judged in points). Labels: /checkout in both runs (regresses hard), /legacy baseline-only, /new candidate-only. Execution 5003 is a GUI/EUX-style run whose ALL row is all nulls (no load KPIs). Shapes mirror shared/scripts/API_NOTES.md.",
+  "routes": [
+    {
+      "path": "/masters/5001",
+      "response": {
+        "result": { "id": 5001, "name": "checkout-flow #41", "testId": 201, "created": 1500000, "updated": 1503600, "ended": 1503600, "reportStatus": "pass" },
+        "error": null
+      }
+    },
+    {
+      "path": "/masters/5002",
+      "response": {
+        "result": { "id": 5002, "name": "checkout-flow #42", "testId": 201, "created": 1600000, "updated": 1603600, "ended": 1603600, "reportStatus": "fail" },
+        "error": null
+      }
+    },
+    {
+      "path": "/masters/5003",
+      "response": {
+        "result": { "id": 5003, "name": "checkout-eux #7", "testId": 205, "created": 1700000, "updated": 1703600, "ended": 1703600, "reportStatus": "pass" },
+        "error": null
+      }
+    },
+    {
+      "path": "/masters/5001/reports/default/summary",
+      "response": {
+        "result": {
+          "summary": [
+            { "id": "ALL", "lb": "ALL", "hits": 1000, "failed": 0, "avg": 200, "min": 38, "max": 1500, "median": 190, "tp90": 380, "tp95": 480, "tp99": 700, "hits_avg": 20.0, "duration": 60, "maxUsers": 20, "bytes": 8300000, "size_avg": 8300 }
+          ]
+        },
+        "error": null
+      }
+    },
+    {
+      "path": "/masters/5002/reports/default/summary",
+      "response": {
+        "result": {
+          "summary": [
+            { "id": "ALL", "lb": "ALL", "hits": 500, "failed": 133, "avg": 300, "min": 50, "max": 2400, "median": 260, "tp90": 450, "tp95": 642, "tp99": 800, "hits_avg": 10.0, "duration": 60, "maxUsers": 10, "bytes": 4100000, "size_avg": 8200 }
+          ]
+        },
+        "error": null
+      }
+    },
+    {
+      "path": "/masters/5003/reports/default/summary",
+      "response": {
+        "result": {
+          "summary": [
+            { "id": "ALL", "lb": "ALL", "hits": null, "failed": null, "avg": null, "min": null, "max": null, "median": null, "tp90": null, "hits_avg": null, "duration": 0, "maxUsers": null }
+          ]
+        },
+        "error": null
+      }
+    },
+    {
+      "path": "/masters/5001/reports/aggregatereport/data",
+      "response": {
+        "result": [
+          { "labelId": "L1", "labelName": "/checkout", "samples": 800, "errorsCount": 0, "errorsRate": 0, "avgResponseTime": 150, "90line": 300, "95line": 380, "99line": 520, "avgThroughput": 13.3 },
+          { "labelId": "L2", "labelName": "/legacy", "samples": 200, "errorsCount": 0, "errorsRate": 0, "avgResponseTime": 180, "90line": 340, "95line": 420, "99line": 560, "avgThroughput": 3.3 }
+        ],
+        "error": null
+      }
+    },
+    {
+      "path": "/masters/5002/reports/aggregatereport/data",
+      "response": {
+        "result": [
+          { "labelId": "L1", "labelName": "/checkout", "samples": 400, "errorsCount": 133, "errorsRate": 33.25, "avgResponseTime": 320, "90line": 520, "95line": 700, "99line": 900, "avgThroughput": 6.7 },
+          { "labelId": "L3", "labelName": "/new", "samples": 100, "errorsCount": 0, "errorsRate": 0, "avgResponseTime": 120, "90line": 250, "95line": 310, "99line": 400, "avgThroughput": 1.7 }
+        ],
+        "error": null
+      }
+    },
+    {
+      "path": "/masters/5003/reports/aggregatereport/data",
+      "response": { "result": [], "error": null }
+    },
+    {
+      "path": "/masters/5001/anomalies/stats",
+      "response": { "result": { "anomalyCount": 0, "affectedLabel": [], "anomalies": [] }, "error": null }
+    },
+    {
+      "path": "/masters/5002/anomalies/stats",
+      "response": {
+        "result": {
+          "anomalyCount": 1,
+          "affectedLabel": ["/checkout"],
+          "anomalies": [
+            { "labelId": "L1", "labelName": "/checkout", "kpi": "errors", "startTime": 1601000, "endTime": 1602000, "maxSpikeHeight": 4.4 }
+          ]
+        },
+        "error": null
+      }
+    },
+    {
+      "path": "/masters/5003/anomalies/stats",
+      "response": { "result": { "anomalyCount": 0, "affectedLabel": [], "anomalies": [] }, "error": null }
+    }
+  ]
+}

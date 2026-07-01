@@ -335,6 +335,131 @@ def test_plan_census_counts_without_fetching_reports(tmp_path, capsys):
     assert not any("/masters" in path for path, _ in transport.calls)
 
 
+# --- run-pair over the pair fixture ---------------------------------------------------
+
+
+def pair_args(tmp_path, **overrides) -> argparse.Namespace:
+    defaults = dict(
+        baseline_id="5001",
+        candidate_id="5002",
+        out=str(tmp_path / "compare.json"),
+        no_anomalies=False,
+    )
+    defaults.update(overrides)
+    return argparse.Namespace(**defaults)
+
+
+def run_pair(tmp_path, transport=None, **overrides):
+    transport = transport or FakeTransport.from_fixture("run_pair.json")
+    args = pair_args(tmp_path, **overrides)
+    rc = bzm_fetch.cmd_run_pair(args, transport)
+    compare = json.loads(Path(args.out).read_text(encoding="utf-8")) if Path(args.out).exists() else None
+    return rc, compare, transport
+
+
+def test_run_pair_produces_the_compare_json(tmp_path, capsys):
+    rc, compare, _ = run_pair(tmp_path)
+    assert rc == 0
+    assert compare["schema_version"] == bzm_fetch.SCHEMA_VERSION
+    assert compare["baseline"]["execution_id"] == "5001"
+    assert compare["baseline"]["report_status"] == "pass"
+    assert compare["candidate"]["report_status"] == "fail"
+    assert compare["baseline"]["test_id"] == "201"
+    assert compare["candidate"]["anomaly_status"] == "anomalies_with_details"
+    assert compare["baseline"]["anomaly_status"] == "no_anomalies"
+
+    v = compare["verdict_inputs"]
+    assert v["candidate_failed_while_baseline_passed"]
+    assert v["regressed"]
+    assert v["load_config_differs"]  # 20 VU vs 10 VU
+    assert compare["coverage"]["http_failed"] == 0
+
+    out = capsys.readouterr().out
+    assert out.count("\n") == 5  # five-line human summary
+    assert "wrote" in out
+
+
+def test_run_pair_normalizes_throughput_when_load_differs(tmp_path):
+    # Candidate ran at half the load: raw RPS halves (20 -> 10) but per-VU
+    # throughput is identical, so throughput must NOT read as a regression.
+    rc, compare, _ = run_pair(tmp_path)
+    tp = compare["kpi_deltas"]["throughput"]
+    assert tp["normalized_per_vu"]
+    assert tp["pct"] == 0.0
+    assert not tp["adverse"]
+    assert "throughput" not in compare["verdict_inputs"]["adverse_kpi_moves"]
+
+
+def test_run_pair_error_rate_from_clean_baseline_is_judged_in_points(tmp_path):
+    rc, compare, _ = run_pair(tmp_path)
+    err = compare["kpi_deltas"]["error_rate"]
+    assert err["pct"] is None  # relative change from 0% is undefined
+    assert err["points"] == 26.6
+    assert err["adverse"]
+
+
+def test_run_pair_same_id_guard(tmp_path, capsys):
+    transport = FakeTransport([])
+    rc, compare, transport = run_pair(
+        tmp_path, transport=transport, baseline_id="5001", candidate_id="5001"
+    )
+    assert rc == 2
+    assert compare is None  # nothing written
+    assert transport.calls == []  # guard fires before any fetch
+    assert "compared to itself" in capsys.readouterr().err
+
+
+def test_run_pair_missing_aggregate_report_degrades_into_coverage(tmp_path):
+    transport = FakeTransport.from_fixture("run_pair.json")
+    transport.routes = [r for r in transport.routes if "/aggregatereport/" not in r["path"]]
+    rc, compare, _ = run_pair(tmp_path, transport=transport)
+    assert rc == 0  # degrade, never crash
+    assert compare["endpoints"]["matched"] == []
+    assert "baseline_request_stats_unavailable" in compare["notes"]
+    assert "candidate_request_stats_unavailable" in compare["notes"]
+    assert compare["coverage"]["http_failed"] == 2
+    # Run-level deltas still computed from the summaries.
+    assert compare["kpi_deltas"]["p95"]["adverse"]
+
+
+def test_run_pair_null_summary_run_reports_kpis_unavailable(tmp_path):
+    # A GUI/EUX-style run returns an ALL row full of nulls: no load KPIs exist,
+    # so the compare says "unavailable" — never a fabricated clean 0% error rate.
+    rc, compare, _ = run_pair(tmp_path, candidate_id="5003")
+    assert rc == 0
+    assert compare["candidate"]["kpis"] is None
+    assert "candidate_kpis_unavailable" in compare["notes"]
+    assert compare["kpi_deltas"] == {}
+    assert compare["verdict_inputs"]["worst_kpi_move"] is None
+    assert not compare["verdict_inputs"]["regressed"]
+
+
+def test_run_pair_endpoint_deltas_match_labels_across_runs(tmp_path):
+    rc, compare, _ = run_pair(tmp_path)
+    endpoints = compare["endpoints"]
+    assert [e["label"] for e in endpoints["matched"]] == ["/checkout"]
+    assert endpoints["baseline_only"] == ["/legacy"]
+    assert endpoints["candidate_only"] == ["/new"]
+
+    checkout = endpoints["matched"][0]
+    assert checkout["deltas"]["avg"]["pct"] == 113.3
+    assert checkout["deltas"]["avg"]["adverse"]
+    assert checkout["deltas"]["error_rate"]["points"] == 33.25
+    # Label throughput is judged per-VU too when the runs' load differs.
+    assert checkout["deltas"]["throughput"]["normalized_per_vu"]
+    assert not checkout["deltas"]["throughput"]["adverse"]
+    assert "/checkout" in compare["verdict_inputs"]["endpoints_with_adverse_moves"]
+
+
+def test_run_pair_unreadable_execution_errors_cleanly(tmp_path, capsys):
+    transport = FakeTransport.from_fixture("run_pair.json")
+    transport.routes = [r for r in transport.routes if r["path"] != "/masters/5002"]
+    rc, compare, _ = run_pair(tmp_path, transport=transport)
+    assert rc == 3
+    assert compare is None
+    assert "could not read execution 5002" in capsys.readouterr().err
+
+
 # --- end-to-end history over the single-test fixture --------------------------------
 
 
