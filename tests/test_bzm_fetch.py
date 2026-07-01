@@ -246,8 +246,10 @@ def test_sweep_produces_the_digest(tmp_path, capsys):
 
     assert rc == 0
     assert digest["schema_version"] == bzm_fetch.SCHEMA_VERSION
-    assert digest["tests_in_scope"] == 2 and digest["tests_ran"] == 2
+    assert digest["runs_in_window"] == 3 and digest["tests_ran"] == 2
     assert digest["coverage"]["http_failed"] == 0
+    # Window-first: the catalog is never enumerated, only in-window activity.
+    assert not any(path == "/tests" for path, _ in transport.calls)
 
     # Failures sort first: search-api (one failing run) ahead of checkout-flow.
     first, second = digest["tests"]
@@ -273,7 +275,7 @@ def test_sweep_produces_the_digest(tmp_path, capsys):
 
     # stdout stays a tiny human summary, not data
     out = capsys.readouterr().out
-    assert "2 ran in window" in out and "wrote" in out
+    assert "across 2 tests" in out and "wrote" in out
 
 
 def test_sweep_conversational_pin_beats_last_passing(tmp_path):
@@ -306,7 +308,7 @@ def test_sweep_pin_pointing_at_candidate_yields_nothing_to_compare(tmp_path):
 def test_sweep_empty_window_reports_idle_not_fabricated(tmp_path):
     rc, digest, _ = run_project_sweep(tmp_path, from_="3000000", to="4000000")
     assert rc == 0
-    assert digest["tests_ran"] == 0 and digest["idle_tests"] == 2
+    assert digest["tests_ran"] == 0 and digest["runs_in_window"] == 0
     assert digest["tests"] == []
 
 
@@ -324,15 +326,18 @@ def test_sweep_exceeding_max_failure_rate_exits_nonzero(tmp_path, capsys):
     assert "exceeds --max-failure-rate" in capsys.readouterr().err
 
 
-def test_plan_census_counts_without_fetching_reports(tmp_path, capsys):
+def test_plan_window_census_counts_runs_without_reports(tmp_path, capsys):
     transport = FakeTransport.from_fixture("project_sweep.json")
     args = argparse.Namespace(account_id=None, workspace_id=None, project_id="101",
-                              concurrency=2)
+                              concurrency=2, from_="1000000", to="2000000")
     rc = bzm_fetch.cmd_plan(args, transport)
     assert rc == 0
     plan = json.loads(capsys.readouterr().out)
-    assert plan["tests"] == 2 and plan["projects"] == 1
-    assert not any("/masters" in path for path, _ in transport.calls)
+    assert plan["runs_in_window"] == 3 and plan["tests_ran"] == 2
+    assert plan["per_test"][0]["runs"] == 2  # busiest test first
+    # Census is ONE windowed /masters listing: no catalog, no reports.
+    assert not any(path == "/tests" for path, _ in transport.calls)
+    assert not any("/reports/" in path for path, _ in transport.calls)
 
 
 # --- run-pair over the pair fixture ---------------------------------------------------

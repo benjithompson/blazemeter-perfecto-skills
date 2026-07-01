@@ -35,29 +35,31 @@ Offer **whole account** as the natural default for a "daily digest", but let the
 
 Check the resolved **account's** AI-consent state via `blazemeter_account read`. If the account has **not** consented, **stop with a clear message** — e.g. `Account Acme (12345) has not enabled AI consent` — before invoking the engine or fetching anything. (The consent gate lives here, in the MCP step, on purpose — it must pass **before** any bulk pull runs.)
 
-### Step 0d — Census the scope with `plan` (the practicality checkpoint)
+### Step 0d — Census the window with `plan` (the practicality checkpoint)
 
-Do **not** enumerate tests by paging MCP lists — run the engine's fast census instead. It counts workspaces/projects/tests using one cheap request per level and prints a small JSON to stdout:
+Do **not** enumerate the test catalog — activity is what costs, so the census is **window-first**: one server-side-filtered listing tells you how many runs (across how many tests) fall in the window, even account-wide. It prints a small JSON to stdout (`runs_in_window`, `tests_ran`, a per-test run count):
 
 ```bash
-python ${CLAUDE_PLUGIN_ROOT}/shared/scripts/bzm_fetch.py plan --account-id <id>
+python ${CLAUDE_PLUGIN_ROOT}/shared/scripts/bzm_fetch.py plan --account-id <id> \
+  --from <window start> --to <window end>       # ISO-8601 or epoch; defaults to the last 24h
 # or:  --workspace-id <id>   |   --project-id <id>     (exactly one scope flag)
 ```
 
 The engine reads the **same credentials the MCP uses** from the environment — `API_KEY_ID` + `API_KEY_SECRET`, or `BLAZEMETER_API_KEY` (a path to a JSON key file). Never pass keys on the command line. If it exits with a credentials error, show the user which variables to set and stop.
 
-**Practicality guard:** show the census to the user. A large sweep (tens of workspaces, hundreds of tests) is heavy on wall-clock even for the engine — say how many workspaces/tests are in play and offer to **narrow to specific workspaces/projects** or proceed with the full sweep. Never silently truncate the scope.
+**Practicality guard:** show the census to the user. The sweep's cost scales with the census (report fetches per run + a baseline lookup per active test) — hundreds of in-window runs is worth a heads-up and an offer to **narrow the scope or shorten the window** before proceeding. Never silently truncate the scope.
+
+(If the user asked for a non-default window, resolve it — Step 1 — *before* running the census, so the census counts the right window.)
 
 ### Step 0e — Display the resolved scope and the census, then continue
 
 Display the cross-test context block before acting, so the run is auditable:
 
 ```
-Scope:      Whole account  (all workspaces)                   ← or "Workspace <name> (ID)" / "Project <name> (ID)"
+Scope:      Whole account                                     ← or "Workspace <name> (ID)" / "Project <name> (ID)"
 Account:    <account name>  (ID: <account_id>)
-Workspaces: <N swept>                                         ← for account scope; omit for a workspace/project digest
 Window:     <resolved window, e.g. last 24h: 2026-06-26 09:00 → 2026-06-27 09:00>
-Tests:      <N> tests in scope
+Activity:   <N> runs across <M> tests in the window           ← from the plan census
 ```
 
 Carry this resolved scope forward as **conversational memory** for later skills in the same conversation (display it, allow a one-step "switch"); **never persist it** to disk.
@@ -87,7 +89,7 @@ python ${CLAUDE_PLUGIN_ROOT}/shared/scripts/bzm_fetch.py sweep \
 
 ## Step 3 — Read the digest JSON and judge severity
 
-Read `--out`. It is compact — one entry per test that ran (idle tests are only counted). Everything numeric is already computed; **do not recompute or second-guess the arithmetic**. Per test you get:
+Read `--out`. It is compact — one entry per test that ran (`runs_in_window` and `tests_ran` at the top level; idle tests are never fetched at all). Everything numeric is already computed; **do not recompute or second-guess the arithmetic**. Per test you get:
 
 - run counts: `runs_in_window`, `kpi_runs`, `passed` / `failed`, `skipped_partial` (aborted/errored runs whose KPIs were deliberately not folded in), `inconclusive`, `still_running`;
 - `baseline` (`source`: `pin | file | last-passing | none`, and the execution id), `candidate_execution_id` (the newest failing run if any failed, else the newest run);
@@ -105,7 +107,7 @@ Treat `statistics_unavailable` as **insufficient data, not a finding** (never an
 
 ## Step 4 — Handle the edge cases gracefully
 
-- **Empty window (nothing ran):** `tests_ran: 0` → **do not** fabricate a scoreboard. Emit the short empty-window form: confirm the scope and window, state plainly that **nothing ran in this window**, note how many tests are in scope, and stop. An empty digest is a valid, useful answer.
+- **Empty window (nothing ran):** `tests_ran: 0` → **do not** fabricate a scoreboard. Emit the short empty-window form: confirm the scope and window, state plainly that **nothing ran in this window**, and stop. An empty digest is a valid, useful answer.
 - **Partial coverage:** surface the `coverage` block honestly — skipped partial runs, failed fetches (with counts), anomaly stats unavailable. Never present a partial sweep as complete.
 - **No baseline for a test:** its regression column reads "no baseline"; judge it on absolute pass/fail only.
 - **Drill-ins stay interactive:** when the user asks about one incident ("what happened in run 9101?"), that is a *single-run* question — answer it with the MCP (`blazemeter_execution read`, `read_all_reports`, `read_anomalies_stats` for **that** execution id, or hand off to `bzm-triage-failure`). Don't re-run the sweep for it.
@@ -114,7 +116,7 @@ Treat `statistics_unavailable` as **insufficient data, not a finding** (never an
 
 ```
 ## BlazeMeter Daily Digest — <scope name> (Account/Workspace/Project ID: <id>)
-**Window:** <from> → <to>   |   **Tests in scope:** N   |   **Ran in window:** M   |   **Account:** <account name> (<account_id>)
+**Window:** <from> → <to>   |   **Runs in window:** N   |   **Tests ran:** M   |   **Account:** <account name> (<account_id>)
 
 ### TL;DR — what needs your eyes today
 1. <highest-severity item — test/run + one-line why>
@@ -136,7 +138,6 @@ Treat `statistics_unavailable` as **insufficient data, not a finding** (never an
 ...
 
 ### Coverage notes
-- Idle tests (no run in window): <N>
 - Skipped (partial/aborted) runs: <N> — KPIs not folded in
 - Tests with no baseline: <N> — judged on absolute pass/fail only
 - Fetch coverage: <ok>/<attempted> (<failed> failed)   ← only when failures > 0
@@ -147,16 +148,15 @@ For an **empty window**, collapse the body to:
 
 ```
 ## BlazeMeter Daily Digest — <scope name> (<id>)
-**Window:** <from> → <to>   |   **Tests in scope:** N
+**Window:** <from> → <to>
 
 Nothing ran in this window. No executions to report.
-(Most recent run across scope: <test> at <timestamp>, if useful.)
 ```
 
 ## Gotchas
 
 - **Never do the bulk pull over MCP.** Chaining `blazemeter_*` list/read calls per test and per execution burns enormous time and tokens at real account sizes and is exactly what the engine exists for. MCP is for Step 0's interactive picks, the consent gate, and single-run drill-ins afterward — nothing in between.
-- **Ask the scope; census, don't narrow to one test.** Step 0 resolves the **account**, **asks** the rollup breadth (whole account / a workspace / a project — never assumed), and runs `plan` for the census. A big census is a reason to *offer narrowing*, never to silently truncate.
+- **Ask the scope; census the window, don't walk the catalog.** Step 0 resolves the **account**, **asks** the rollup breadth (whole account / a workspace / a project — never assumed), and runs `plan` for the **window census** — activity is the cost driver, and idle tests are never touched. A big census is a reason to *offer narrowing*, never to silently truncate.
 - **Consent before sweep.** The AI-consent check (Step 0c) must pass before any `plan`/`sweep` invocation — the gate lives in the MCP layer, and the engine assumes it already happened.
 - **Credentials are environment-only.** The engine reads `API_KEY_ID`/`API_KEY_SECRET` or `BLAZEMETER_API_KEY` (a key-file path) — the same variables the MCP uses. Never put a key on the command line, in the digest, or in the conversation.
 - **Trust the engine's arithmetic.** Deltas, normalization, baseline choice, and status buckets are computed deterministically and fixture-tested. Your job is severity ranking and narrative — if a number looks wrong, say so and show it; don't silently recompute.

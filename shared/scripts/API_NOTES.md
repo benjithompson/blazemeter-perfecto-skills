@@ -34,6 +34,7 @@ Params: `limit` (documented max **50**), `skip` (offset), `sort[]=-updated`
 | Tests of project   | `/tests`                                        | `projectId` (only — no workspaceId variant) |
 | Project read       | `/projects/{id}`                                | —                     |
 | Executions of test | `/masters`                                      | `testId`              |
+| Executions in scope+window | `/masters`                              | `accountId` \| `workspaceId` \| `projectId`, `startTime`+`endTime` (epoch s) |
 | Execution read     | `/masters/{id}`                                 | — (used by `run-pair`)|
 | Summary report     | `/masters/{id}/reports/default/summary`         | —                     |
 | Errors report      | `/masters/{id}/reports/errorsreport/data`       | —                     |
@@ -45,7 +46,14 @@ Params: `limit` (documented max **50**), `skip` (offset), `sort[]=-updated`
 - **Master (execution)**: `id`, `name`, `created`, `updated`, `ended` — **epoch
   seconds**; `ended == null` means still running. Verdict field is **`reportStatus`**
   ∈ `pass | fail | unset | abort | error | noData` (default `unset`). Archived flag:
-  `dumped`. The single read `/masters/{id}` returns the same shape plus `testId`
+  `dumped`. **List rows also carry `testId`, `projectId`, and `maxUsers`** (verified
+  live), so a scope-wide listing needs no per-test iteration. **`/masters` accepts
+  `startTime`/`endTime` (epoch seconds) for server-side window filtering** and can be
+  scoped by `accountId`, `workspaceId`, or `projectId` — a whole-account 24h window is
+  typically one request. Undocumented params tried and ignored by the API:
+  `from/to`, `minCreated/maxCreated`, `createdAfter/createdBefore`. Caveat: the
+  account-wide listing may return `total: "n/a"` — stop paging on a short page, not
+  on `total`. The single read `/masters/{id}` returns the same shape plus `testId`
   (which the engine surfaces as `test_id` in `run-pair` output when present).
 - **Summary**: `result.summary[]`; take the aggregate row where `id == "ALL"` (or
   `lb == "ALL"`). Fields: `hits`, `failed`, `avg`, `min`, `max`, `median`, `tp90`,

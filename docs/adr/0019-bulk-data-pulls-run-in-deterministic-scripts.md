@@ -57,6 +57,19 @@ when credentials are present, auto-skip in CI, marker `live`) catch drift at
 minimal scope. The undocumented `/masters/{id}/anomalies/stats` endpoint degrades
 gracefully to `statistics_unavailable`.
 
+**Amendment (2026-07-01) — window-first sweeps.** The original `sweep` enumerated the
+test catalog (workspaces × projects × tests) and listed executions per test — O(catalog)
+even when almost nothing ran. `/masters` turns out to accept server-side
+`startTime`/`endTime` filtering scoped by `accountId`/`workspaceId`/`projectId`, and its
+list rows carry `testId`/`projectId`/`maxUsers` — so `sweep` and `plan` are now
+**window-first**: one filtered listing finds every in-window run across the scope
+(whole-account 24h ≈ one request), grouped by `testId`; baselines and reports are
+fetched only for **active** tests. Cost scales with activity, not catalog size
+(SE Demo: 166 workspaces / 6,339 tests → seconds instead of minutes). The digest schema
+(v2) drops `tests_in_scope`/`idle_tests` — unknowable without a catalog walk — in favor
+of `runs_in_window`; `plan` is now a window census (runs/tests active), which is the
+sweep's true cost driver and the right practicality guard.
+
 **What this does not change.** Step 0 Context Resolution stays MCP and interactive
 (including the consent gate — enforced client-side, so it must run *before* the
 engine). Drill-ins stay MCP. The conventions' "MCP-first" posture survives as

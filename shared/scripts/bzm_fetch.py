@@ -11,15 +11,18 @@ contract) next to this file.
 
 Subcommands:
 
-  plan   Fast scope census — workspace/project/test COUNTS only (uses each list
-         endpoint's `total` field; no executions, no reports). Feeds the skill's
-         "this is 800 tests, narrow or proceed?" checkpoint. Prints JSON to stdout.
+  plan   Window census — ONE server-side-filtered /masters listing per scope
+         (startTime/endTime): how many runs, across how many tests, in the
+         window. Cost scales with runs-in-window, not catalog size; a
+         whole-account census is typically a single request. Prints JSON.
 
-  sweep  The full pipeline: enumerate tests in scope -> list each test's executions
-         and keep those overlapping [--from, --to) -> fetch summary/errors/
-         request-stats/anomalies per kept run -> resolve each test's baseline
-         (pins > committed file > last passing) -> compute KPI deltas and verdicts
-         -> write the digest JSON to --out. Stdout is a five-line human summary.
+  sweep  The full pipeline, window-first: one filtered /masters listing finds
+         every in-window run across the scope (idle tests are never touched) ->
+         group by testId -> fetch summary/request-stats/anomalies per kept run
+         -> resolve each ACTIVE test's baseline (pins > committed file > last
+         passing, via that test's own history) -> compute KPI deltas and
+         verdicts -> write the digest JSON to --out. Stdout is a five-line
+         human summary.
 
   run-pair  Compare exactly two executions (baseline vs candidate): fetch both
          masters, summary KPIs, request stats, and anomaly status -> compute
@@ -76,7 +79,7 @@ from pathlib import Path
 
 import bzm_baseline
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 BASE_URL = "https://a.blazemeter.com/api/v4"
 PAGE_SIZE = 50  # documented max for every v4 list endpoint (see API_NOTES.md)
 USER_AGENT = "perforce-skills-bzm-fetch/1"
@@ -437,69 +440,62 @@ class Sweeper:
 
     # - paged lists -
 
-    def _list_all(self, path: str, params: dict, stage: str) -> list[dict]:
-        """Page a v4 list endpoint to completion (scope-level: failures raise)."""
-        items: list[dict] = []
+    # - windowed scope listing (server-side time filter; the sweep's entry point) -
+
+    def masters_in_window(self, scope: dict, from_ts: int, to_ts: int) -> list[dict]:
+        """List every master in the scope whose start falls inside [from, to).
+
+        One paged `/masters` listing with the server-side `startTime`/`endTime`
+        filter (epoch seconds) — cost scales with runs-in-window, never with the
+        size of the test catalog. Master rows carry `testId`, `projectId`,
+        `reportStatus`, and `maxUsers`, so no per-test iteration is needed.
+        Results are re-filtered client-side as a defensive check. Root failure
+        raises (scope-level); the account-wide listing may omit `total`, so
+        paging stops on a short page.
+        """
+        scope_param = (
+            {"projectId": scope["project_id"]}
+            if scope.get("project_id")
+            else {"workspaceId": scope["workspace_id"]}
+            if scope.get("workspace_id")
+            else {"accountId": scope["account_id"]}
+        )
+        masters: list[dict] = []
         skip = 0
         while True:
             page = self.t.get(
-                path, {**params, "limit": PAGE_SIZE, "skip": skip, "sort[]": "-updated"}
+                "/masters",
+                {
+                    **scope_param,
+                    "limit": PAGE_SIZE,
+                    "skip": skip,
+                    "sort[]": "-created",
+                    "startTime": from_ts,
+                    "endTime": to_ts,
+                },
             )
             self.cov.ok()
             batch = page.get("result") or []
-            items.extend(batch)
+            masters.extend(m for m in batch if overlaps_window(m, from_ts, to_ts))
             skip += PAGE_SIZE
-            total = page.get("total")
-            if not batch or (total is not None and skip >= total):
-                return items
+            if len(batch) < PAGE_SIZE:
+                return masters
 
-    def count(self, path: str, params: dict) -> int:
-        """One-request census via the envelope's `total` field."""
-        page = self.t.get(path, {**params, "limit": 1, "skip": 0})
-        self.cov.ok()
-        total = page.get("total")
-        return total if total is not None else len(page.get("result") or [])
-
-    # - scope enumeration -
-
-    def enumerate_tests(self, scope: dict) -> list[dict]:
-        """Resolve the scope to [{test, project, workspace}] rows.
-
-        Root listings raise (scope-level failure); per-branch listing failures are
-        recorded in coverage and that branch is skipped, like any other fetch.
-        """
-        rows: list[dict] = []
-
-        def tests_of(project: dict, workspace: dict | None):
-            try:
-                tests = self._list_all("/tests", {"projectId": project["id"]}, "tests")
-            except Exception as exc:  # noqa: BLE001 - recorded, branch skipped
-                self.cov.fail("tests", "project:%s" % project.get("id"), exc)
-                return
-            for test in tests:
-                rows.append({"test": test, "project": project, "workspace": workspace})
-
-        if scope.get("project_id"):
-            project = self.t.get("/projects/%s" % scope["project_id"]).get("result") or {}
+    def project_context(self, project_id, cache: dict) -> dict:
+        """Resolve {project, workspace} names for grouping, cached per project id."""
+        if project_id in cache:
+            return cache[project_id]
+        context = {"project": {"id": project_id, "name": None}, "workspace": None}
+        try:
+            project = self.t.get("/projects/%s" % project_id).get("result") or {}
             self.cov.ok()
-            tests_of(project, None)
-            return rows
-
-        if scope.get("workspace_id"):
-            workspaces = [{"id": scope["workspace_id"], "name": None}]
-        else:
-            workspaces = self._list_all(
-                "/workspaces", {"accountId": scope["account_id"]}, "workspaces"
-            )
-
-        for ws in workspaces:
-            try:
-                projects = self._list_all("/projects", {"workspaceId": ws["id"]}, "projects")
-            except Exception as exc:  # noqa: BLE001
-                self.cov.fail("projects", "workspace:%s" % ws.get("id"), exc)
-                continue
-            list(self.pool.map(lambda p, w=ws: tests_of(p, w), projects))
-        return rows
+            context["project"] = {"id": project.get("id", project_id), "name": project.get("name")}
+            if project.get("workspaceId"):
+                context["workspace"] = {"id": project["workspaceId"], "name": None}
+        except Exception as exc:  # noqa: BLE001 - names are cosmetic, ids still group
+            self.cov.fail("project", "project:%s" % project_id, exc)
+        cache[project_id] = context
+        return context
 
     # - executions & reports -
 
@@ -712,43 +708,44 @@ def _scope_from_args(args) -> dict:
 
 
 def cmd_plan(args, transport) -> int:
+    """Window census: how many runs, across how many tests, in the window.
+
+    One server-side-filtered `/masters` listing — cost scales with runs in the
+    window, so a whole-account census is typically a single request. This is the
+    practicality checkpoint before `sweep`: the run/test counts ARE the sweep's
+    cost driver (the sweep adds report fetches per KPI run plus baseline lookups
+    per active test).
+    """
+    from_ts = parse_when(args.from_) if args.from_ else int(time.time()) - 86400
+    to_ts = parse_when(args.to) if args.to else int(time.time())
+    if from_ts >= to_ts:
+        print("error: --from must be earlier than --to", file=sys.stderr)
+        return 2
+
     cov = Coverage()
     sweeper = Sweeper(transport, cov, concurrency=args.concurrency)
     scope = _scope_from_args(args)
+    masters = sweeper.masters_in_window(scope, from_ts, to_ts)
 
-    if scope["project_id"]:
-        tests = sweeper.count("/tests", {"projectId": scope["project_id"]})
-        plan = {"scope": scope, "projects": 1, "tests": tests}
-    else:
-        if scope["workspace_id"]:
-            workspaces = [{"id": scope["workspace_id"], "name": None}]
-        else:
-            workspaces = sweeper._list_all(
-                "/workspaces", {"accountId": scope["account_id"]}, "workspaces"
-            )
-        per_ws = []
-        for ws in workspaces:
-            projects = sweeper._list_all("/projects", {"workspaceId": ws["id"]}, "projects")
-            tests = sum(
-                sweeper.pool.map(
-                    lambda p: sweeper.count("/tests", {"projectId": p["id"]}), projects
-                )
-            )
-            per_ws.append(
-                {
-                    "workspace_id": ws["id"],
-                    "workspace_name": ws.get("name"),
-                    "projects": len(projects),
-                    "tests": tests,
-                }
-            )
-        plan = {
-            "scope": scope,
-            "workspaces": len(workspaces),
-            "projects": sum(w["projects"] for w in per_ws),
-            "tests": sum(w["tests"] for w in per_ws),
-            "per_workspace": per_ws,
-        }
+    by_test: dict = {}
+    for m in masters:
+        by_test.setdefault(m.get("testId"), []).append(m)
+    plan = {
+        "scope": scope,
+        "window": {"from": from_ts, "to": to_ts},
+        "runs_in_window": len(masters),
+        "tests_ran": len(by_test),
+        "projects_active": len({m.get("projectId") for m in masters}),
+        "per_test": [
+            {
+                "test_id": tid,
+                "test_name": runs[0].get("name"),
+                "runs": len(runs),
+                "statuses": sorted({str(r.get("reportStatus") or "unset") for r in runs}),
+            }
+            for tid, runs in sorted(by_test.items(), key=lambda kv: -len(kv[1]))
+        ],
+    }
     print(json.dumps(plan, indent=2))
     return 0
 
@@ -772,10 +769,31 @@ def cmd_sweep(args, transport) -> int:
 
     cov = Coverage()
     sweeper = Sweeper(transport, cov, concurrency=args.concurrency)
-    rows = sweeper.enumerate_tests(_scope_from_args(args))
+    scope = _scope_from_args(args)
 
-    def process(row):
-        masters = sweeper.masters_for_test(row["test"]["id"], from_ts)
+    # One server-side-filtered listing finds every run in the window across the
+    # whole scope — idle tests are never touched, so cost scales with activity.
+    window_masters = sweeper.masters_in_window(scope, from_ts, to_ts)
+    by_test: dict = {}
+    for m in window_masters:
+        by_test.setdefault(str(m.get("testId")), []).append(m)
+
+    context_cache: dict = {}
+
+    def process(item):
+        test_id, in_window = item
+        # Baseline lookback (last-passing) needs history beyond the window — but
+        # only when nothing pins this test's baseline, and only for ACTIVE tests.
+        if test_id in pins or test_id in baseline_file:
+            masters = in_window
+        else:
+            masters = sweeper.masters_for_test(test_id, from_ts) or in_window
+        context = sweeper.project_context(in_window[0].get("projectId"), context_cache)
+        row = {
+            "test": {"id": test_id, "name": in_window[0].get("name")},
+            "project": context["project"],
+            "workspace": context["workspace"],
+        }
         return judge_test(
             row,
             masters,
@@ -788,7 +806,7 @@ def cmd_sweep(args, transport) -> int:
             include_anomalies=not args.no_anomalies,
         )
 
-    entries = [e for e in sweeper.pool.map(process, rows) if e is not None]
+    entries = [e for e in sweeper.pool.map(process, by_test.items()) if e is not None]
     # Failures first, then biggest adverse move — the scoreboard's sort order.
     entries.sort(
         key=lambda e: (
@@ -802,11 +820,10 @@ def cmd_sweep(args, transport) -> int:
     )
     digest = {
         "schema_version": SCHEMA_VERSION,
-        "scope": _scope_from_args(args),
+        "scope": scope,
         "window": {"from": from_ts, "to": to_ts},
-        "tests_in_scope": len(rows),
+        "runs_in_window": len(window_masters),
         "tests_ran": len(entries),
-        "idle_tests": len(rows) - len(entries),
         "tests": entries,
         "coverage": {
             "http_attempted": cov.attempted,
@@ -825,8 +842,8 @@ def cmd_sweep(args, transport) -> int:
     regressed = sum(1 for e in entries if e["regressed"])
     no_baseline = sum(1 for e in entries if e["baseline"]["source"] == "none")
     print(
-        "sweep: %d tests in scope, %d ran in window, %d runs rolled up"
-        % (len(rows), len(entries), sum(e["kpi_runs"] for e in entries))
+        "sweep: %d runs in window across %d tests, %d runs rolled up"
+        % (len(window_masters), len(entries), sum(e["kpi_runs"] for e in entries))
     )
     print(
         "failing runs: %d | newly regressed tests: %d | no baseline: %d"
@@ -1261,8 +1278,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub = parser.add_subparsers(dest="command")
 
-    p_plan = sub.add_parser("plan", help="Fast scope census: workspace/project/test counts only.")
+    p_plan = sub.add_parser(
+        "plan", help="Window census: runs/tests active in the window (default last 24h)."
+    )
     _add_scope_args(p_plan)
+    p_plan.add_argument("--from", dest="from_", help="window start (ISO-8601 or epoch; default 24h ago)")
+    p_plan.add_argument("--to", help="window end (ISO-8601 or epoch; default now)")
     p_plan.set_defaults(func=cmd_plan)
 
     p_sweep = sub.add_parser(
