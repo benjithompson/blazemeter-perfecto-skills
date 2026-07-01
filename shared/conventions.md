@@ -92,16 +92,22 @@ Embed this as **Step 0** of the skill (skills are self-contained prose — copy 
 
 Apply the same rule at **every** level you must resolve (workspace, project, test):
 
-1. Start from the default. `blazemeter_user read` gives **one** default account/workspace/project.
-   Present it as a **pre-filled choice to confirm or override** — only prompt when there is genuine
-   ambiguity. If a level has exactly one option, proceed and just **display** it.
+1. Start from the default, but **determine ambiguity by enumerating — never assume the default is
+   the only option**. `blazemeter_user read` gives **one** default account/workspace/project; treat
+   it as a pre-filled suggestion, then list the level (step 2) to see how many options exist.
+   **Exactly one** → display it and proceed. **More than one** → present the numbered pick and
+   **stop** for the user's choice; never silently accept the default.
 2. To enumerate options, list the level (`blazemeter_account list`, `blazemeter_workspaces list`,
-   `blazemeter_project list`, `blazemeter_tests list`) one page at a time (`limit: 50`).
-   - **Small set** (the first page is *not* full) → show a **numbered list, every entry with its
-     id** — e.g. `1. Acme (account 12345)` — and let the user pick.
-   - **Too big to list** (the first page comes back full, so more pages exist — common for users
-     with very many workspaces) → **do not dump the list**. Ask the user to **name or paste** the
-     workspace/project/test. A pasted **id short-circuits** any level (direct `read`); a **name**
+   `blazemeter_project list`, `blazemeter_tests list`) one page at a time (`limit: 50`), then
+   present them with a **preference for an interactive choice list**:
+   - **Fits a choice list** (a handful of options) → present an **interactive choice list**, every
+     entry showing its **name + id** with the default marked; the user clicks one.
+   - **Too many for the choice widget but still enumerable** (within a page or two) → fall back to a
+     **numbered text list with ids** — e.g. `1. Acme (account 12345)` — the user picks a number or
+     pastes an id.
+   - **Large / paginated** (the first page comes back full, so more pages exist — common for users
+     with very many workspaces, >50) → **do not dump the list**. Ask the user to **name, paste an
+     id, or give a filter**. A pasted **id short-circuits** any level (direct `read`); a **name**
      you resolve by paging and matching.
 3. Always show the **id** next to each name so same-named entities are distinguishable and the id is
    locked for the next call.
