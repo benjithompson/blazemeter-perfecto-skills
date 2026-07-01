@@ -1,0 +1,117 @@
+{
+  "comment": "Canned v4 responses for one test's run history (test 301, window 1000000-2000000). Newest run 9401 passes clean; 9301 fails with a 26% error rate, one anomaly, and a near-100%-error endpoint; 9201 passes near-identical to 9401; 9101 aborted (partial - no reports fetched); 9051 is noData (inconclusive); 9000 passes but its ALL summary row is all-null (zero hits, e.g. a GUI/EUX run) and ends exactly at the window start (edge: included); 8000 predates the window entirely (excluded). No summary/anomaly routes exist for 9101/9051/8000 on purpose - fetching them is a fixture error.",
+  "routes": [
+    {
+      "path": "/tests/301",
+      "response": {
+        "result": { "id": 301, "name": "checkout-flow", "projectId": 101 },
+        "error": null
+      }
+    },
+    {
+      "path": "/masters",
+      "params": { "testId": "301", "skip": "0" },
+      "response": {
+        "result": [
+          { "id": 9401, "name": "checkout-flow", "created": 1700000, "updated": 1703600, "ended": 1703600, "reportStatus": "pass" },
+          { "id": 9301, "name": "checkout-flow", "created": 1600000, "updated": 1603600, "ended": 1603600, "reportStatus": "fail" },
+          { "id": 9201, "name": "checkout-flow", "created": 1490000, "updated": 1493600, "ended": 1493600, "reportStatus": "pass" },
+          { "id": 9101, "name": "checkout-flow", "created": 1400000, "updated": 1403600, "ended": 1403600, "reportStatus": "abort" },
+          { "id": 9051, "name": "checkout-flow", "created": 1350000, "updated": 1353600, "ended": 1353600, "reportStatus": "noData" },
+          { "id": 9000, "name": "checkout-flow", "created": 900000, "updated": 1000000, "ended": 1000000, "reportStatus": "pass" },
+          { "id": 8000, "name": "checkout-flow", "created": 500000, "updated": 503600, "ended": 503600, "reportStatus": "pass" }
+        ],
+        "total": 7, "skip": 0, "limit": 50, "error": null
+      }
+    },
+    {
+      "path": "/masters/9401/reports/default/summary",
+      "response": {
+        "result": {
+          "summary": [
+            { "id": "ALL", "lb": "ALL", "hits": 1000, "failed": 0, "avg": 210, "min": 40, "max": 1500, "median": 195, "tp90": 390, "tp95": 500, "tp99": 710, "hits_avg": 16.8, "duration": 60, "maxUsers": 20, "bytes": 8300000, "size_avg": 8300 }
+          ]
+        },
+        "error": null
+      }
+    },
+    {
+      "path": "/masters/9301/reports/default/summary",
+      "response": {
+        "result": {
+          "summary": [
+            { "id": "ALL", "lb": "ALL", "hits": 1000, "failed": 260, "avg": 300, "min": 50, "max": 2400, "median": 260, "tp90": 500, "tp95": 700, "tp99": 900, "hits_avg": 15.0, "duration": 60, "maxUsers": 20, "bytes": 8100000, "size_avg": 8100 }
+          ]
+        },
+        "error": null
+      }
+    },
+    {
+      "path": "/masters/9201/reports/default/summary",
+      "response": {
+        "result": {
+          "summary": [
+            { "id": "ALL", "lb": "ALL", "hits": 1000, "failed": 0, "avg": 205, "min": 39, "max": 1480, "median": 190, "tp90": 385, "tp95": 490, "tp99": 700, "hits_avg": 16.9, "duration": 60, "maxUsers": 20, "bytes": 8200000, "size_avg": 8200 }
+          ]
+        },
+        "error": null
+      }
+    },
+    {
+      "path": "/masters/9000/reports/default/summary",
+      "response": {
+        "result": {
+          "summary": [
+            { "id": "ALL", "lb": "ALL", "hits": null, "failed": null, "avg": null, "min": null, "max": null, "median": null, "tp90": null, "hits_avg": null, "duration": 0, "maxUsers": null }
+          ]
+        },
+        "error": null
+      }
+    },
+    {
+      "path": "/masters/9401/anomalies/stats",
+      "response": { "result": { "anomalyCount": 0, "affectedLabel": [], "anomalies": [] }, "error": null }
+    },
+    {
+      "path": "/masters/9301/anomalies/stats",
+      "response": {
+        "result": {
+          "anomalyCount": 1,
+          "affectedLabel": ["/search"],
+          "anomalies": [
+            { "labelId": "L3", "labelName": "/search", "kpi": "p95", "startTime": 1601000, "endTime": 1602000, "maxSpikeHeight": 3.2 }
+          ]
+        },
+        "error": null
+      }
+    },
+    {
+      "path": "/masters/9201/anomalies/stats",
+      "response": { "result": { "anomalyCount": 0, "affectedLabel": [], "anomalies": [] }, "error": null }
+    },
+    {
+      "path": "/masters/9000/anomalies/stats",
+      "response": { "result": {}, "error": null }
+    },
+    {
+      "path": "/masters/9301/reports/aggregatereport/data",
+      "response": {
+        "result": [
+          { "labelId": "L3", "labelName": "/search", "samples": 500, "errorsCount": 490, "errorsRate": 98.0, "avgResponseTime": 600, "90line": 900, "95line": 1100, "99line": 1600 },
+          { "labelId": "L4", "labelName": "/home", "samples": 500, "errorsCount": 0, "errorsRate": 0, "avgResponseTime": 120, "90line": 250, "95line": 320, "99line": 480 }
+        ],
+        "error": null
+      }
+    },
+    {
+      "path": "/masters/9401/reports/aggregatereport/data",
+      "response": {
+        "result": [
+          { "labelId": "L3", "labelName": "/search", "samples": 500, "errorsCount": 0, "errorsRate": 0, "avgResponseTime": 210, "90line": 390, "95line": 500, "99line": 710 },
+          { "labelId": "L4", "labelName": "/home", "samples": 500, "errorsCount": 0, "errorsRate": 0, "avgResponseTime": 118, "90line": 245, "95line": 315, "99line": 470 }
+        ],
+        "error": null
+      }
+    }
+  ]
+}
