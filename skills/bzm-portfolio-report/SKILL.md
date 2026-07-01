@@ -15,10 +15,10 @@ This is the **cross-test** Context Resolution step from `shared/conventions.md` 
 
 Apply the uniform tiered pick rule (§4.2) at **each** level — account, then workspace, then project:
 
-- Start from the `blazemeter_user read` default, presented as a **confirmable/overridable** suggestion; if a level has exactly one option, just **display** it and proceed.
+- Start from the `blazemeter_user read` default, but **don't assume it's unambiguous — enumerate the level (next bullet) to see how many options exist**: exactly one → **display** it and proceed; more than one → present the numbered pick and **stop** for the user's choice (never silently take the default).
 - To enumerate options, list one page (`blazemeter_account list` / `blazemeter_workspaces list` / `blazemeter_project list`, `limit: 50`).
-  - **Small set** (the first page is *not* full) → show a **numbered list, every entry with its id** (e.g. `1. Acme (account 12345)`) and let the user pick.
-  - **Too big to list** (the first page comes back full) → **don't dump it**; ask the user to **name or paste** the workspace/project. A pasted **id short-circuits** any level via a direct `read`; a **name** you resolve by paging and matching.
+  - **Fits a choice list** (small set — the first page is *not* full) → present an **interactive choice list**, every entry showing name + id (default marked), the user clicks one; if there are more options than the choice widget holds, fall back to a **numbered text list** with ids (e.g. `1. Acme (account 12345)`).
+  - **Too big / paginated** (the first page comes back full → more pages exist, e.g. >50) → **don't dump it**; ask the user to **name, paste an id, or filter**. A pasted **id short-circuits** any level via a direct `read`; a **name** you resolve by paging and matching.
 - Always show the **id** next to each name so same-named entities are distinguishable.
 - **Name doesn't resolve cleanly (§4.3):** no match → say so, show what *is* available, stop; multiple matches → list each candidate with its **parent and id** and let the user pick; 403 → report the access gap, don't retry. **Never fall back to the default** at any level.
 
