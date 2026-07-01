@@ -1,5 +1,5 @@
 ---
-name: blazemeter-ci-setup
+name: bzm-ci-setup
 description: Scaffold a ready-to-commit GitHub Actions workflow that runs a BlazeMeter test in CI and gates the job on the result — choose a gate policy (the test's own pass/fail failure criteria, or compare-vs-baseline against .blazemeter/baseline.json) and trigger(s) (on PR, on push to a branch, and/or on a schedule), with the workflow reading credentials only from ${{ secrets.BLAZEMETER_API_KEY }}. Use when asked to set up CI for a BlazeMeter test, add a performance gate to a repo, run a load test on PR/push/nightly, or generate a GitHub Actions workflow for BlazeMeter.
 ---
 
@@ -107,7 +107,7 @@ Give the user the **exact** steps to provision the secret and (if needed) the ba
 If the project touches GitHub through an MCP-backed flow (e.g. opening the PR that adds this workflow, or posting status), use the **GitHub MCP** first per conventions §5 — `gh`/REST is only a documented fallback. Setting a repository *secret* is done by the user in the GitHub UI (or `gh secret set`), not by this skill: the skill never handles the token.
 
 **Only for `compare-baseline` — commit the baseline file:**
-1. Create / update `.blazemeter/baseline.json` (a `test_id → execution_id` map) with the **`blazemeter-baseline`** skill ("promote this run to the baseline"). It writes the file and shows a diff.
+1. Create / update `.blazemeter/baseline.json` (a `test_id → execution_id` map) with the **`bzm-baseline`** skill ("promote this run to the baseline"). It writes the file and shows a diff.
 2. **Commit** `.blazemeter/baseline.json` alongside the workflow. The gate reads it on every run; without an entry for this `test_id`, the job fails fast with a clear message telling the user to create it.
 
 ## Output template
@@ -130,7 +130,7 @@ Account / Workspace / Project: <names + ids> (from Step 0)
 1. Add repository secret BLAZEMETER_API_KEY (Settings → Secrets and variables → Actions)
    — value = the BlazeMeter API-key JSON; never commit it.
 2. (compare-baseline only) Create & commit .blazemeter/baseline.json via the
-   blazemeter-baseline skill.
+   bzm-baseline skill.
 
 ### README snippet (optional — paste into the repo's README)
 > Performance is gated in CI by BlazeMeter (`.github/workflows/<file>.yml`). It runs
@@ -149,7 +149,7 @@ Account / Workspace / Project: <names + ids> (from Step 0)
 - **The workflow won't run until the secret exists.** A committed workflow that references `secrets.BLAZEMETER_API_KEY` fails (or skips auth) until the user adds that repository secret. This friction is deliberate — it's the only way to keep a committed artifact credential-free. Tell the user to add the secret as the first step.
 - **CI uses REST v4, not the MCP — and the prose says so (conventions §5).** The BlazeMeter MCP is an interactive server, not a headless CI runner, so the generated job drives the test via the documented REST API v4 fallback (start → poll the master → read the verdict/KPIs). That's the justified gap; the skill's *own* context resolution still uses the MCP first.
 - **`pass-fail` needs real failure criteria.** A test with no `failure_criteria` yields an `unset`/indeterminate verdict, which is **not** a pass. If Step 0's `blazemeter_tests read` shows no criteria, warn the user and steer them to define criteria or use `compare-baseline`.
-- **`compare-baseline` needs a committed baseline file.** The gate reads `.blazemeter/baseline.json` (keyed by `test_id`); if it's missing or has no entry for this test, the job fails fast by design. Create it with the `blazemeter-baseline` skill and commit it. The baseline file is the *user's* version-controlled repo state, not plugin-cached context (ADR-0017) — it's fine to commit.
+- **`compare-baseline` needs a committed baseline file.** The gate reads `.blazemeter/baseline.json` (keyed by `test_id`); if it's missing or has no entry for this test, the job fails fast by design. Create it with the `bzm-baseline` skill and commit it. The baseline file is the *user's* version-controlled repo state, not plugin-cached context (ADR-0017) — it's fine to commit.
 - **Every gated run costs minutes/credits.** A PR or push trigger starts a real BlazeMeter execution on each event. Pick triggers deliberately — `schedule` (nightly) plus manual `workflow_dispatch` is often cheaper than gating every PR; confirm the cadence with the user.
 - **One workflow per gated test.** The scaffold generates a single job for one `test_id`. To gate several tests, generate separate workflow files (distinct `--name` and filenames) rather than hand-merging jobs.
 - **Don't write into THIS plugin's repo.** The workflow is for the *user's* repo at `.github/workflows/`; generate it as text and have the user commit it there. Never add it under the plugin's own `.github/workflows/`.

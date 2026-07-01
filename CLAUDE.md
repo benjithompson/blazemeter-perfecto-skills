@@ -17,12 +17,12 @@ and use to drive these platforms from Claude Code.
 
 This repo is itself a Claude Code plugin (`.claude-plugin/plugin.json`). **During active
 development it loads directly from a local git checkout** as a skills-directory plugin
-(`blaze@skills-dir`) — symlink the repo into `~/.claude/skills/` and Claude Code
+(`perforce@skills-dir`) — symlink the repo into `~/.claude/skills/` and Claude Code
 discovers it in place, with no marketplace install and no version pin (see the README "Install"
 section). Marketplace distribution (`.claude-plugin/marketplace.json`) is **deferred** until the
 plugin is built out further; the manifest is kept ready for that. Layout:
 
-- `skills/<name>/SKILL.md` — the skills (auto-discovered; invoked as `blaze:<name>`).
+- `skills/<name>/SKILL.md` — the skills (auto-discovered; invoked as `perforce:<name>`).
 - `shared/conventions.md` — **the skill-authoring house style and Definition of Done. Read it
   before adding or changing a skill.** It defines the required Context Resolution step, frontmatter
   rules, credential handling, and MCP-first integration.
@@ -44,7 +44,7 @@ With the **direct-from-git (skills-dir)** setup, the plugin is read **in place**
 so there is no version pin and no reinstall. Updating is just:
 
 ```bash
-git -C ~/.claude/skills/blaze pull
+git -C ~/.claude/skills/perforce pull
 ```
 
 Then `/reload-plugins` (or a new session). Edits to a `SKILL.md` take effect immediately; changes

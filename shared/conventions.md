@@ -37,7 +37,7 @@ Each `SKILL.md` opens with flat YAML frontmatter. CI runs
 
 ```markdown
 ---
-name: analyze-blazemeter-test
+name: bzm-analyze-test
 description: One or two sentences — what the skill does AND when to use it ("Use when …") — so the model can decide to invoke it.
 ---
 ```
@@ -59,9 +59,9 @@ python shared/scripts/lint_frontmatter.py skills
 
 ## 3. Namespacing
 
-The plugin is named `blaze`, so skills are invoked namespaced as
-`blaze:<skill-name>` (e.g. `blaze:analyze-blazemeter-test`). Name
-skills platform-first (`analyze-blazemeter-test`, not `analyze-test`) so later pillars
+The plugin is named `perforce`, so skills are invoked namespaced as
+`perforce:<skill-name>` (e.g. `perforce:bzm-analyze-test`). Name
+skills platform-first (`bzm-analyze-test`, not `analyze-test`) so later pillars
 (Perfecto, Virtual Services, API Monitoring) never collide.
 
 ## 4. The canonical Context Resolution step (required)
@@ -231,7 +231,7 @@ A `SKILL.md` body, after the frontmatter, reads top-to-bottom as a procedure:
 5. **Gotchas** — the non-obvious failure modes (pagination limits, statuses to skip, label
    fields to use instead of raw ids, normalization caveats).
 
-`analyze-blazemeter-test` is the reference implementation of this shape.
+`bzm-analyze-test` is the reference implementation of this shape.
 
 ## 8. Definition of Done
 

@@ -1,5 +1,5 @@
 ---
-name: blazemeter-report
+name: bzm-report
 description: Generate a branded, self-contained HTML cross-run trend & regression Report for a BlazeMeter test over a time window — trend lines, regression flags, and SLA compliance across many runs. Use when asked for a shareable/stakeholder report, a release report, a multi-run trend or regression summary, or a portfolio/scorecard view the platform's single-run reports can't produce.
 ---
 
@@ -148,9 +148,9 @@ Omit a section by leaving its array empty (or `sla` absent) — the template's c
 
 The Report is a single shipped HTML template that renders itself from the data model in the browser — there is **no Python step and no local interpreter**. Produce the file with three deterministic actions:
 
-1. **Read the template** at `${CLAUDE_PLUGIN_ROOT}/skills/blazemeter-report/assets/report-template.html`. It bakes in the CSS, the approximated-BlazeMeter brand vars, and the vendored client-side JS that builds every section (context, summary, run history, regressions, SLA, endpoints, and the trend charts derived from `runs[]`).
+1. **Read the template** at `${CLAUDE_PLUGIN_ROOT}/skills/bzm-report/assets/report-template.html`. It bakes in the CSS, the approximated-BlazeMeter brand vars, and the vendored client-side JS that builds every section (context, summary, run history, regressions, SLA, endpoints, and the trend charts derived from `runs[]`).
 2. **Serialize your Step 4 data model to JSON** and **replace the single token `{{REPORT_DATA_JSON}}`** with it. The token sits inside `<script>window.REPORT_DATA = {{REPORT_DATA_JSON}};</script>`, so before substituting, **HTML-escape every `</` in the JSON to `<\/`** — that is the one transform that guarantees a string value (e.g. an endpoint label like `</checkout>`) can never close the `<script>` tag early. Substitute the token literally; do not otherwise reformat the template.
-3. **Write the result** as a `.html` file (default `./blazemeter-reports/`, filename a slug of the test name + `generated_at`). Use the `Write` tool — no shell, no `python`.
+3. **Write the result** as a `.html` file (default `./bzm-reports/`, filename a slug of the test name + `generated_at`). Use the `Write` tool — no shell, no `python`.
 
 The output is fully self-contained (offline, no CDN — safe to email): the same single token is the only thing that varies run-to-run, so layout and branding stay deterministic. To re-brand later, edit the CSS `:root` vars (and the inline logo SVG) in the template; that is a template edit, not a code change.
 

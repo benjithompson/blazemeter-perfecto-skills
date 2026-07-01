@@ -6,7 +6,7 @@
   },
   "plugins": [
     {
-      "name": "blaze",
+      "name": "perforce",
       "source": ".",
       "description": "BlazeMeter performance expert-workflow skills: run, analyze, compare, triage, and report on tests. Reuses your BlazeMeter MCP credentials.",
       "version": "0.2.1",

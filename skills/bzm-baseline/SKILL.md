@@ -1,5 +1,5 @@
 ---
-name: blazemeter-baseline
+name: bzm-baseline
 description: Establish, update, resolve, and show the golden performance baseline for a BlazeMeter test — pin a specific execution as the baseline, resolve the active baseline (pinned id, else the last passing run), and read/write the committed .blazemeter/baseline.json used to gate CI. Use when asked to set, promote, pin, show, or look up the baseline a test's runs are compared against, or to update the baseline file in a repo.
 ---
 
@@ -173,7 +173,7 @@ Account / Workspace / Project: <names + ids> (from Step 0)
 - **Two representations, kept separate (ADR-0017).** A conversational pin and the committed CI file are different things and can diverge. A pin lives only for the conversation and is **never** written to disk; only an explicit "update the baseline file" touches `.blazemeter/baseline.json`. Don't conflate them.
 - **Never persist conversational context.** The committed baseline file is *the user's* repo state (test_id → execution_id) — fine to write when asked. Resolved **account/workspace/project** context is **not**: never cache it to disk (conventions §4.6, ADR-0012).
 - **Always diff before writing.** Show the unified diff (the `set` action prints it on a dry run) and get approval before `--write`. The skill never commits the file for the user.
-- **"Passing" is an explicit pass.** Last-passing selection counts only a clean pass verdict; `unset` (no criteria), `abort`, `error`, `noData`, and still-running runs are excluded — same posture as compare-blazemeter-runs. If `last-passing` returns null, there is no baseline to pick; say so rather than baselining a failed run.
+- **"Passing" is an explicit pass.** Last-passing selection counts only a clean pass verdict; `unset` (no criteria), `abort`, `error`, `noData`, and still-running runs are excluded — same posture as bzm-compare-runs. If `last-passing` returns null, there is no baseline to pick; say so rather than baselining a failed run.
 - **Completion before baselining.** Confirm `ended != null` on any candidate — a partial run's KPIs look artificially good or bad and would poison every future comparison.
 - **Malformed / missing baseline file.** A *missing* `.blazemeter/baseline.json` is an empty baseline (not an error). A *present but malformed* file is a real error — the script exits non-zero; report it and ask the user to fix the file, don't silently fall through to last-passing.
 - **One file, many tests.** `.blazemeter/baseline.json` is keyed by `test_id`, so a write must **merge** (preserve other tests' entries) — the script does this; never overwrite the file with a single entry.

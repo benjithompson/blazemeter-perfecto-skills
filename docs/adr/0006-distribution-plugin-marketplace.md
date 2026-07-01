@@ -10,7 +10,7 @@ through a **marketplace**, so users install once and use it in both the Claude C
 VS Code extension — both surfaces share the same config and plugin directories.
 
 Why: one artifact covers both surfaces; plugins are versioned and updatable; plugin skills are
-namespaced (e.g. `blaze:analyze-blazemeter-test`), avoiding collisions in a shared
+namespaced (e.g. `perforce:bzm-analyze-test`), avoiding collisions in a shared
 install. The loose skill folders remain copy-able into `~/.claude/skills/` as a no-machinery
 fallback.
 

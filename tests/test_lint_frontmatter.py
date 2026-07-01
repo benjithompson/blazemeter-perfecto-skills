@@ -20,7 +20,7 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 GOOD = """\
 ---
-name: analyze-blazemeter-test
+name: bzm-analyze-test
 description: Analyze a BlazeMeter test's execution history. Use when asked to trend or review a test.
 ---
 
@@ -29,7 +29,7 @@ Body goes here.
 
 
 def test_valid_frontmatter_has_no_errors():
-    assert lf.lint_text(GOOD, expected_name="analyze-blazemeter-test") == []
+    assert lf.lint_text(GOOD, expected_name="bzm-analyze-test") == []
 
 
 def test_valid_frontmatter_ignores_unknown_optional_keys():
@@ -37,7 +37,7 @@ def test_valid_frontmatter_ignores_unknown_optional_keys():
         "---\n\nBody",
         "allowed-tools: Bash, Read\ndisable-model-invocation: false\n---\n\nBody",
     )
-    assert lf.lint_text(text, expected_name="analyze-blazemeter-test") == []
+    assert lf.lint_text(text, expected_name="bzm-analyze-test") == []
 
 
 # --- the malformations the linter must catch ---------------------------------
@@ -48,17 +48,17 @@ def _has_error(errors, needle):
 
 
 def test_stray_backtick_before_fence_is_rejected():
-    # The exact bug in the original analyze-blazemeter-test skill: a stray
+    # The exact bug in the original bzm-analyze-test skill: a stray
     # backtick turns the opening `---` fence into `` `--- ``.
     text = "`" + GOOD
-    errors = lf.lint_text(text, expected_name="analyze-blazemeter-test")
+    errors = lf.lint_text(text, expected_name="bzm-analyze-test")
     ok, errs = _has_error(errors, "frontmatter")
     assert ok, errs
 
 
 def test_leading_blank_line_before_fence_is_rejected():
     text = "\n" + GOOD
-    assert lf.lint_text(text, expected_name="analyze-blazemeter-test") != []
+    assert lf.lint_text(text, expected_name="bzm-analyze-test") != []
 
 
 def test_missing_opening_fence_is_rejected():
@@ -103,7 +103,7 @@ def test_non_kebab_case_name_is_rejected():
 
 def test_name_must_match_directory():
     text = "---\nname: some-other-name\ndescription: A valid description here.\n---\nBody\n"
-    errors = lf.lint_text(text, expected_name="analyze-blazemeter-test")
+    errors = lf.lint_text(text, expected_name="bzm-analyze-test")
     ok, errs = _has_error(errors, "director")
     assert ok, errs
 

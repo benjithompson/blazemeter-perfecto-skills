@@ -20,20 +20,20 @@ issues.
 
 | Skill | What it does |
 | --- | --- |
-| `analyze-blazemeter-test` | Analyzes a test's full execution history — response-time trends, regressions, tail-latency, error patterns, anomalies, per-endpoint hot spots, and SLA/failure-criteria compliance — and delivers a QA performance assessment. |
-| `run-blazemeter-test` | Runs a test end-to-end — optionally sets a simple load profile (with confirmation), starts the execution, polls to completion, and reports a pass/fail summary against the test's failure criteria. |
-| `compare-blazemeter-runs` | Compares two executions (baseline vs candidate) — diffs response-time percentiles, throughput, and error rate with magnitude and direction, flags regressions past a threshold, and emits a ship / no-ship verdict. |
-| `triage-blazemeter-failure` | Deep-dives one failed or regressed run — breaks errors down by type and endpoint, ranks endpoint hot spots, summarizes anomalies, separates systemic problems from noise, and ends with prioritized next steps. |
-| `blazemeter-report` | Generates a branded, self-contained HTML cross-run trend & regression Report over a time window — trend charts, regression flags, and SLA compliance across many runs, rendered offline from a shipped HTML template the skill fills in (no local interpreter needed). |
-| `blazemeter-baseline` | Establishes, updates, and resolves the **golden baseline** run for a test — pin a specific execution, or fall back to the last passing run; reads/writes a committed `.blazemeter/baseline.json` for reproducible CI gating. The reference point `compare` and the PR gate build on. |
-| `blazemeter-daily-digest` | The **"analysis of the day"** — sweeps every execution across a workspace/project in a window and emits one cross-test scorecard: what ran, pass/fail, which tests newly regressed vs. their own baseline, incidents ranked by severity, and a prioritized "what needs your eyes today." |
-| `blazemeter-portfolio-report` | A branded, self-contained HTML scorecard across **many tests** over a window — per-test health, SLA-compliance %, trend arrows, and regression flags — the portfolio/stakeholder view, rendered offline from the same shared report engine. |
-| `blazemeter-ci-setup` | Scaffolds a **GitHub Actions** workflow that runs a BlazeMeter test on PRs / pushes / a schedule and gates on pass/fail or compare-vs-baseline — emitting the workflow YAML and the repo-secret wiring (credentials via `${{ secrets.BLAZEMETER_API_KEY }}`, never embedded). |
-| `blazemeter-pr-gate` | A Journey that gates a pull request on performance — runs the test, compares the candidate against the resolved baseline, and posts a ship / no-ship verdict back as a **PR comment and commit status**. |
+| `bzm-analyze-test` | Analyzes a test's full execution history — response-time trends, regressions, tail-latency, error patterns, anomalies, per-endpoint hot spots, and SLA/failure-criteria compliance — and delivers a QA performance assessment. |
+| `bzm-run-test` | Runs a test end-to-end — optionally sets a simple load profile (with confirmation), starts the execution, polls to completion, and reports a pass/fail summary against the test's failure criteria. |
+| `bzm-compare-runs` | Compares two executions (baseline vs candidate) — diffs response-time percentiles, throughput, and error rate with magnitude and direction, flags regressions past a threshold, and emits a ship / no-ship verdict. |
+| `bzm-triage-failure` | Deep-dives one failed or regressed run — breaks errors down by type and endpoint, ranks endpoint hot spots, summarizes anomalies, separates systemic problems from noise, and ends with prioritized next steps. |
+| `bzm-report` | Generates a branded, self-contained HTML cross-run trend & regression Report over a time window — trend charts, regression flags, and SLA compliance across many runs, rendered offline from a shipped HTML template the skill fills in (no local interpreter needed). |
+| `bzm-baseline` | Establishes, updates, and resolves the **golden baseline** run for a test — pin a specific execution, or fall back to the last passing run; reads/writes a committed `.blazemeter/baseline.json` for reproducible CI gating. The reference point `compare` and the PR gate build on. |
+| `bzm-daily-digest` | The **"analysis of the day"** — sweeps every execution across a workspace/project in a window and emits one cross-test scorecard: what ran, pass/fail, which tests newly regressed vs. their own baseline, incidents ranked by severity, and a prioritized "what needs your eyes today." |
+| `bzm-portfolio-report` | A branded, self-contained HTML scorecard across **many tests** over a window — per-test health, SLA-compliance %, trend arrows, and regression flags — the portfolio/stakeholder view, rendered offline from the same shared report engine. |
+| `bzm-ci-setup` | Scaffolds a **GitHub Actions** workflow that runs a BlazeMeter test on PRs / pushes / a schedule and gates on pass/fail or compare-vs-baseline — emitting the workflow YAML and the repo-secret wiring (credentials via `${{ secrets.BLAZEMETER_API_KEY }}`, never embedded). |
+| `bzm-pr-gate` | A Journey that gates a pull request on performance — runs the test, compares the candidate against the resolved baseline, and posts a ship / no-ship verdict back as a **PR comment and commit status**. |
 
 Each skill is **also a slash command**: once the plugin is installed, every skill appears in the
-`/` menu (namespaced) as **`/blaze:<skill-name>`**, e.g.
-`/blaze:run-blazemeter-test`. You don't need separate command wrappers — the skill
+`/` menu (namespaced) as **`/perforce:<skill-name>`**, e.g.
+`/perforce:bzm-run-test`. You don't need separate command wrappers — the skill
 *is* the command, and Claude can also invoke it automatically when it's relevant.
 
 ## Prerequisites
@@ -55,15 +55,15 @@ skills directory so Claude Code discovers it as a plugin:
 
 ```bash
 git clone https://github.com/benjithompson/blazemeter-perfecto-skills.git
-ln -s "$(pwd)/blazemeter-perfecto-skills" ~/.claude/skills/blaze
+ln -s "$(pwd)/blazemeter-perfecto-skills" ~/.claude/skills/perforce
 ```
 
 Any folder under `~/.claude/skills/` that contains a `.claude-plugin/plugin.json` loads
-automatically on the next session as **`blaze@skills-dir`** — the skills then appear
+automatically on the next session as **`perforce@skills-dir`** — the skills then appear
 (namespaced) in the `/` menu on the **CLI, the VS Code extension, and the desktop app** (the
 `~/.claude/skills/` location is shared across all three). No `/plugin install` needed.
 
-> Don't want a symlink? Clone directly into `~/.claude/skills/blaze` instead. Or, for
+> Don't want a symlink? Clone directly into `~/.claude/skills/perforce` instead. Or, for
 > a one-off session, launch the CLI with `claude --plugin-dir /path/to/blazemeter-perfecto-skills`.
 
 ### Updating
@@ -71,15 +71,15 @@ automatically on the next session as **`blaze@skills-dir`** — the skills then 
 Because the plugin is read **in place** from your checkout, updating is just:
 
 ```bash
-git -C ~/.claude/skills/blaze pull
+git -C ~/.claude/skills/perforce pull
 ```
 
 Then `/reload-plugins` (or start a new session). Edits to a `SKILL.md` take effect immediately;
 changes to other components (`.mcp.json`, `hooks/`, etc.) need the reload. **No version bump or
 reinstall required** — that's the payoff of loading direct from git.
 
-To stop loading it, remove the symlink (`rm ~/.claude/skills/blaze`) or run
-`claude plugin disable blaze@skills-dir`.
+To stop loading it, remove the symlink (`rm ~/.claude/skills/perforce`) or run
+`claude plugin disable perforce@skills-dir`.
 
 > **Marketplace distribution is deferred.** Once the plugin is built out further it will be
 > published via a self-hosted marketplace (`.claude-plugin/marketplace.json` is kept ready for
@@ -102,7 +102,7 @@ desktop-specific notes:
   `export`ed vars. So set your BlazeMeter credentials (`API_KEY_ID` + `API_KEY_SECRET`, or
   `BLAZEMETER_API_KEY`) via **Settings → Claude Code → local environment editor** (or the
   environment dropdown in the prompt box → **Local** → gear icon) — the bundled MCP server reads
-  them from there too. No language runtime is required: every skill (including `blazemeter-report`,
+  them from there too. No language runtime is required: every skill (including `bzm-report`,
   which fills a shipped HTML template) runs with just the MCP and credentials — nothing is shelled
   out to a local interpreter.
 

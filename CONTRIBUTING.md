@@ -40,7 +40,7 @@ short, every skill:
 
 Shared, deterministic logic (scripts) goes in `shared/scripts/` and is referenced from skills via
 `${CLAUDE_PLUGIN_ROOT}`; it gets fixture tests under `tests/`. Skills that ship a static asset (e.g.
-the `blazemeter-report` HTML template) keep it in the skill's own `assets/` and fill it in-skill —
+the `bzm-report` HTML template) keep it in the skill's own `assets/` and fill it in-skill —
 no interpreter shelled out at runtime.
 
 ## Running checks locally

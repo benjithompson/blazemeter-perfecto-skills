@@ -1,11 +1,11 @@
 ---
-name: blazemeter-portfolio-report
+name: bzm-portfolio-report
 description: Generate ONE branded, self-contained HTML scorecard across MANY BlazeMeter tests in a workspace or project over a window (default a quarter) — per-test health, SLA-compliance %, trend arrows, and regression-vs-own-baseline flags, plus ranked incidents. Use when asked for a shareable/stakeholder portfolio report, a quarterly or release scorecard across a whole suite, an executive cross-test rollup, or a "how is the whole portfolio doing?" HTML you can email.
 ---
 
-Produce the **Portfolio Report**: a single branded, self-contained HTML scorecard that rolls up **every test in a scope** (a workspace or project) over a window (default a quarter) — each test's health, SLA-compliance %, trend, and whether it regressed against **its own baseline**, plus a ranked cross-test incident list. It is the **shareable HTML rendering** of the same cross-test view `blazemeter-daily-digest` produces in markdown: reach for the digest when you want a scannable standup artifact in the terminal, and for this skill when you want a stakeholder-facing, emailable HTML scorecard. Where `blazemeter-report` trends **one** test across its runs, this skill is its **portfolio sibling** — the same engine, the same brand, one row per test instead of one row per run.
+Produce the **Portfolio Report**: a single branded, self-contained HTML scorecard that rolls up **every test in a scope** (a workspace or project) over a window (default a quarter) — each test's health, SLA-compliance %, trend, and whether it regressed against **its own baseline**, plus a ranked cross-test incident list. It is the **shareable HTML rendering** of the same cross-test view `bzm-daily-digest` produces in markdown: reach for the digest when you want a scannable standup artifact in the terminal, and for this skill when you want a stakeholder-facing, emailable HTML scorecard. Where `bzm-report` trends **one** test across its runs, this skill is its **portfolio sibling** — the same engine, the same brand, one row per test instead of one row per run.
 
-This skill **retrieves and normalizes** cross-test data, then fills the same shipped HTML template `blazemeter-report` uses (`skills/blazemeter-report/assets/report-template.html`). New report types are added at the **same data-model seam**, not by forking the renderer (ADR-0014): you build a **portfolio** Report data model (JSON with `kind: "portfolio"`) and drop it into the single `{{REPORT_DATA_JSON}}` token; the template's baked-in CSS, vendored client-side charts, and approximated-BlazeMeter branding own the layout. The model's `kind` selects the portfolio section group (scorecard, incidents, portfolio charts). No local interpreter is involved: the render is a token replacement plus a file write, so it runs identically across the CLI, VS Code, and the desktop app.
+This skill **retrieves and normalizes** cross-test data, then fills the same shipped HTML template `bzm-report` uses (`skills/bzm-report/assets/report-template.html`). New report types are added at the **same data-model seam**, not by forking the renderer (ADR-0014): you build a **portfolio** Report data model (JSON with `kind: "portfolio"`) and drop it into the single `{{REPORT_DATA_JSON}}` token; the template's baked-in CSS, vendored client-side charts, and approximated-BlazeMeter branding own the layout. The model's `kind` selects the portfolio section group (scorecard, incidents, portfolio charts). No local interpreter is involved: the render is a token replacement plus a file write, so it runs identically across the CLI, VS Code, and the desktop app.
 
 ## Step 0 — Resolve and confirm the *scope* (account → workspace → project), then enumerate its tests
 
@@ -80,7 +80,7 @@ blazemeter_execution read              { execution_id: <id> }   # execution_stat
 blazemeter_execution read_all_reports  { execution_id: <id> }   # summary + errors + request_stats
 ```
 
-Map the **summary** report's `overall_metrics` into KPI fields (the field names differ — map explicitly, same mapping `blazemeter-report` uses):
+Map the **summary** report's `overall_metrics` into KPI fields (the field names differ — map explicitly, same mapping `bzm-report` uses):
 
 | Report field (`overall_metrics`) | KPI |
 | --- | --- |
@@ -107,7 +107,7 @@ From the test's in-window run series (ordered oldest → newest), classify the p
 
 ### 4c. Regression vs the test's own baseline (reuse `bzm_baseline.py` — don't re-implement)
 
-A run can pass its criteria yet be **meaningfully slower than the test's golden baseline** — exactly what a portfolio scorecard exists to surface. Resolve **each test's own baseline** and compare its most significant in-window run against it. **Reuse the shared script and concept from `blazemeter-baseline` / ADR-0017 — do not re-implement baseline logic.** Resolution order, per test:
+A run can pass its criteria yet be **meaningfully slower than the test's golden baseline** — exactly what a portfolio scorecard exists to surface. Resolve **each test's own baseline** and compare its most significant in-window run against it. **Reuse the shared script and concept from `bzm-baseline` / ADR-0017 — do not re-implement baseline logic.** Resolution order, per test:
 
 1. **Conversational pin** — if the user pinned a baseline `execution_id` for this test earlier in the conversation, use it.
 2. **Committed CI file** — if the repo has `.blazemeter/baseline.json`, read its entry for this `test_id`:
@@ -174,11 +174,11 @@ Leave `tests` rows for **idle** tests out of the array (note them in the coverag
 
 ## Step 6 — Emit the branded Portfolio Report (template fill, no interpreter)
 
-The Portfolio Report is the **same shipped HTML template** as `blazemeter-report`, rendering itself from the data model in the browser — there is **no Python step and no local interpreter**. Produce the file with three deterministic actions:
+The Portfolio Report is the **same shipped HTML template** as `bzm-report`, rendering itself from the data model in the browser — there is **no Python step and no local interpreter**. Produce the file with three deterministic actions:
 
-1. **Read the template** at `${CLAUDE_PLUGIN_ROOT}/skills/blazemeter-report/assets/report-template.html`. It bakes in the CSS, the approximated-BlazeMeter brand vars, and the vendored client-side JS that dispatches on the model's `kind` and builds the portfolio sections (scope context, executive summary, portfolio charts, the per-test scorecard, and ranked incidents).
+1. **Read the template** at `${CLAUDE_PLUGIN_ROOT}/skills/bzm-report/assets/report-template.html`. It bakes in the CSS, the approximated-BlazeMeter brand vars, and the vendored client-side JS that dispatches on the model's `kind` and builds the portfolio sections (scope context, executive summary, portfolio charts, the per-test scorecard, and ranked incidents).
 2. **Serialize your Step 5 data model to JSON** and **replace the single token `{{REPORT_DATA_JSON}}`** with it. The token sits inside `<script>window.REPORT_DATA = {{REPORT_DATA_JSON}};</script>`, so before substituting, **HTML-escape every `</` in the JSON to `<\/`** — that guarantees a string value (e.g. a test name like `Catalog </checkout>`) can never close the `<script>` tag early. Substitute the token literally; do not otherwise reformat the template.
-3. **Write the result** as a `.html` file (default `./blazemeter-reports/`, filename a slug of the scope name + `generated_at`). Use the `Write` tool — no shell, no `python`.
+3. **Write the result** as a `.html` file (default `./bzm-reports/`, filename a slug of the scope name + `generated_at`). Use the `Write` tool — no shell, no `python`.
 
 The output is fully self-contained (offline, no CDN — safe to email): the same single token is the only thing that varies run-to-run, so layout and branding stay deterministic. **Branding lives in the template** (the CSS `:root` vars + inline logo SVG) — never hardcode brand values in the data model; re-branding is a template edit, not a model change.
 
@@ -203,7 +203,7 @@ Open the HTML file to see the full branded scorecard (per-test health, SLA-compl
 ## Gotchas
 
 - **Cross-test scope, not one test (§4.7).** Step 0 resolves to a **scope** and **enumerates** its tests — a full first page of `blazemeter_tests list` means "keep paging", **not** "ask the user to name one test". Only an impractically large scope warrants asking the user to narrow to a project.
-- **Same engine, new report type at the data-model seam (ADR-0014).** Set `kind: "portfolio"` — that is what selects the scorecard/incidents/portfolio-charts section group in the one shipped template. Don't fork the renderer or hand-write report HTML; fill `blazemeter-report`'s `assets/report-template.html`. (Omit `kind` and you get the single-test layout.)
+- **Same engine, new report type at the data-model seam (ADR-0014).** Set `kind: "portfolio"` — that is what selects the scorecard/incidents/portfolio-charts section group in the one shipped template. Don't fork the renderer or hand-write report HTML; fill `bzm-report`'s `assets/report-template.html`. (Omit `kind` and you get the single-test layout.)
 - **Per-test baseline via the shared script.** Resolve each test's baseline **per test** (pinned → committed `.blazemeter/baseline.json` → last-passing) via `${CLAUDE_PLUGIN_ROOT}/shared/scripts/bzm_baseline.py` — don't re-implement it, and don't share one baseline across tests. `last-passing` → `null` means "no baseline": set `baseline_source: "no baseline"` and fall back to absolute pass/fail. A baseline may predate the window — page history further back. A malformed committed file exits non-zero — surface it.
 - **Field-name mapping is exact.** `average_response_time_ms` / `average_throughput_per_second` / `error_rate_percent` / `percentile_9X_ms` / `max_concurrent_users` → `avg_rt_ms` / `rps` / `error_rate_pct` / `p9X_ms` / `concurrency`. A mis-key silently drops a KPI.
 - **`generated_at` is supplied, not read.** The template never reads the clock (deterministic render). Provide the current timestamp; `meta.title` and `meta.generated_at` are required.
@@ -213,6 +213,6 @@ Open the HTML file to see the full branded scorecard (per-test health, SLA-compl
 - **Failure-criteria labels come from the test, not the execution.** Describe SLA rules with the test object's `failure_criteria.meta.*` labels; the execution only carries the overall `execution_status` (no per-criterion per-run result) — attribute a failing run by comparing its summary KPIs to the rule's threshold.
 - **No credentials in the model or output.** The data model holds data + narrative only; Platform Credentials never belong in it (the template only ever sees what you inject). The generated HTML is shareable/emailable — keep it secret-free.
 - **Escape `</` before substituting.** The model is injected into a `<script>` tag, so any `</` inside a string value (a test name, a narrative line) must become `<\/` first — otherwise it can close the tag early. This is the only transform the JSON needs.
-- **Companion to the digest.** `blazemeter-daily-digest` produces the same cross-test rollup as **markdown/terminal**; this skill is its **shareable HTML** form. Use the digest for a standup; use this for a stakeholder-facing scorecard.
+- **Companion to the digest.** `bzm-daily-digest` produces the same cross-test rollup as **markdown/terminal**; this skill is its **shareable HTML** form. Use the digest for a standup; use this for a stakeholder-facing scorecard.
 - **MCP-first.** Every retrieval is a `blazemeter_*` MCP action; no REST v4 fallback is needed. Only a genuine MCP gap would justify a documented REST call (conventions §5).
 - **Never persist scope.** The resolved account/workspace/project is conversational memory only — never written to disk (§4.6, ADR-0012). The committed `.blazemeter/baseline.json` is the user's own repo state and a different thing (ADR-0017).

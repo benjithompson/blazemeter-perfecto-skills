@@ -1,7 +1,7 @@
 """Golden/fixture tests for the Report template engine at the data-model seam.
 
 The Report is rendered CLIENT-SIDE by a vendored JS engine baked into
-`skills/blazemeter-report/assets/report-template.html` (ADR-0014). New report
+`skills/bzm-report/assets/report-template.html` (ADR-0014). New report
 types are added at the **same data-model seam** rather than by forking the
 renderer: the model's `kind` field selects which section group the one engine
 builds. These tests exercise that seam — fixture data model in, rendered DOM out
@@ -29,7 +29,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent
-TEMPLATE = REPO / "skills" / "blazemeter-report" / "assets" / "report-template.html"
+TEMPLATE = REPO / "skills" / "bzm-report" / "assets" / "report-template.html"
 HARNESS = REPO / "tests" / "assets" / "render_report.mjs"
 FIXTURES = REPO / "tests" / "fixtures" / "portfolio"
 PORTFOLIO_MODEL = FIXTURES / "portfolio-model.json"

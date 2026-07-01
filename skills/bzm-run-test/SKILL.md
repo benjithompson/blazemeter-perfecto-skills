@@ -1,5 +1,5 @@
 ---
-name: run-blazemeter-test
+name: bzm-run-test
 description: Run a BlazeMeter Performance test end-to-end — optionally set a simple load profile, start the execution, poll to completion, and report a pass/fail summary against the test's failure criteria. Use when asked to run, kick off, launch, or smoke/validate a BlazeMeter test and report whether it passed.
 ---
 

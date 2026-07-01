@@ -2,7 +2,7 @@
 
 The repo is built primarily as independent **expert-workflow skills** — each encoding one
 opinionated, expert-judgment task on top of raw MCP calls (chained calls, gotchas, fixed output
-templates), in the mould of `analyze-blazemeter-test`. The durable value is *encoded expertise* the
+templates), in the mould of `bzm-analyze-test`. The durable value is *encoded expertise* the
 MCP servers don't have.
 
 Rejected as the center of gravity:

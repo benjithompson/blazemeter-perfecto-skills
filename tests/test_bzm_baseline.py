@@ -1,6 +1,6 @@
 """Fixture-driven tests for the pure baseline logic (`bzm_baseline`).
 
-These exercise the deterministic half of the `blazemeter-baseline` skill with no
+These exercise the deterministic half of the `bzm-baseline` skill with no
 live BlazeMeter calls — exactly the pieces ADR-0017 makes the skill responsible for:
 
   * resolving the active baseline (explicit pin wins over last-passing);
