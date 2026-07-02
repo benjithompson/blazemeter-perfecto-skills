@@ -7,5 +7,5 @@ testpaths = ["tests"]
 # test data, not test modules — keep pytest from trying to collect them.
 norecursedirs = ["tests/fixtures"]
 markers = [
-    "live: hits the real BlazeMeter API; auto-runs when credentials are present, auto-skips otherwise (CI has none)",
+    "live: hits a real external service (the BlazeMeter API, or a local InfluxDB 2.x); auto-runs when the relevant credentials are present, auto-skips otherwise (CI has none)",
 ]
