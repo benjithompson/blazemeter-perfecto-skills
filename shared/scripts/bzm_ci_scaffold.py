@@ -24,7 +24,7 @@ Two **gate policies** are supported:
   * ``compare-baseline`` — gate by comparing the run against the committed
     ``.blazemeter/baseline.json`` baseline (ADR-0017). The workflow checks out the
     repo so the baseline file is available, and the user must commit it (see the
-    `bzm-baseline` skill).
+    `bzm-set-baseline` skill).
 
 Three **triggers** are supported and can be combined: ``pr`` (pull_request),
 ``push`` (push to a branch), and ``schedule`` (cron).
@@ -154,10 +154,10 @@ def _runner_script(gate: str) -> list[str]:
             '          # Gate by comparing this run against the committed baseline',
             '          # (.blazemeter/baseline.json, ADR-0017). The baseline maps',
             '          # test_id -> execution_id; create/update it with the',
-            '          # bzm-baseline skill and commit it.',
+            '          # bzm-set-baseline skill and commit it.',
             '          baseline_file = ".blazemeter/baseline.json"',
             '          if not os.path.exists(baseline_file):',
-            '              sys.exit("Missing %s — create it with the bzm-baseline skill and commit it" % baseline_file)',
+            '              sys.exit("Missing %s — create it with the bzm-set-baseline skill and commit it" % baseline_file)',
             '          with open(baseline_file) as fh:',
             '              baseline = json.load(fh)',
             '          baseline_id = baseline.get(str(test_id))',

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pure baseline logic for the `bzm-baseline` skill.
+"""Pure baseline logic for the `bzm-set-baseline` skill.
 
 This module holds the **deterministic** pieces of baseline handling so they can be
 fixture-tested without any live BlazeMeter calls (see `tests/test_bzm_baseline.py`).
@@ -38,7 +38,7 @@ from pathlib import Path
 # Execution statuses that count as a "pass" for baseline selection. BlazeMeter's
 # execution verdict is `execution_status`; only an explicit pass qualifies. An
 # `unset`/`abort`/`error`/`noData` run is NOT a clean pass and must never become a
-# baseline (consistent with how bzm-compare-runs treats those statuses).
+# baseline (consistent with how bzm-test-analysis treats those statuses).
 PASSING_STATUSES = frozenset({"passed", "pass"})
 
 
@@ -232,7 +232,7 @@ def _cmd_set(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Pure baseline logic for the bzm-baseline skill "
+        description="Pure baseline logic for the bzm-set-baseline skill "
         "(CI baseline file read/merge/write + last-passing selection).",
     )
     sub = parser.add_subparsers(dest="command")

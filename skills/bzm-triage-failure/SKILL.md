@@ -5,7 +5,7 @@ description: Deep-dive a single failed or regressed BlazeMeter execution and pro
 
 Triage one failed or regressed BlazeMeter execution: break errors down by type **and** by endpoint, rank endpoint hot spots by p95 latency and error contribution, summarize anomalies, separate likely-**systemic** problems from one-off **noise**, and end with prioritized, actionable next steps an engineer can act on.
 
-This skill diagnoses a **single execution** in depth. It is the counterpart to `bzm-analyze-test`, which trends *many* runs of a test over time — reach for that when you need history, for this when you need to understand *why one run went wrong*.
+This skill diagnoses a **single execution** in depth. It is the counterpart to `bzm-test-analysis`, which trends *many* runs of a test over time — reach for that when you need history, for this when you need to understand *why one run went wrong*.
 
 ## Step 0 — Resolve and confirm context (account → workspace → project → test → execution)
 

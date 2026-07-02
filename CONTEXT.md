@@ -79,6 +79,17 @@ passing run resolved at call time; in CI, the execution mapped to a test in the 
 `.blazemeter/baseline.json` (see ADR-0017).
 _Avoid_: benchmark, golden run
 
+**Trend**:
+The per-run aggregate KPI series of one test across many executions — one point per run
+(avg/percentiles/throughput/error rate) over a time window. The cross-run axis of analysis.
+_Avoid_: history (when you mean the series), graph
+
+**Intra-Run Timeseries**:
+The KPI curves *within* a single execution — the second-by-second data behind the platform's
+live execution charts. Distinct from a Trend: a Trend compares runs, an Intra-Run Timeseries
+shows how one run unfolded.
+_Avoid_: timeseries (unqualified), chart data
+
 **Daily Digest**:
 A cross-test skill that summarizes recent activity across every test in a resolved workspace or
 project — a scheduled, at-a-glance health readout, not a single-test analysis. Uses the cross-test
