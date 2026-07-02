@@ -1017,16 +1017,19 @@ def test_live_intra_run_timeseries_endpoints():
     """
     key_id, key_secret = bzm_fetch.load_credentials()
     t = bzm_fetch.Transport(key_id, key_secret)
-    account_id = (t.get("/user")["result"].get("defaultProject") or {}).get("accountId")
-    if not account_id:
-        pytest.skip("user has no default account to search for a finished run")
-    masters = t.get(
-        "/masters", {"accountId": account_id, "limit": 20, "skip": 0, "sort[]": "-created"}
-    ).get("result") or []
-    ended = [m for m in masters if m.get("ended") and m.get("reportStatus") in ("pass", "fail")]
-    if not ended:
-        pytest.skip("no finished KPI-bearing run in the account's recent history")
-    master_id = str(ended[0]["id"])
+    master_id = os.environ.get("BZM_LIVE_EXECUTION_ID")
+    if not master_id:
+        # No pinned run: fall back to the newest finished run in the default account.
+        account_id = (t.get("/user")["result"].get("defaultProject") or {}).get("accountId")
+        if not account_id:
+            pytest.skip("user has no default account to search for a finished run")
+        masters = t.get(
+            "/masters", {"accountId": account_id, "limit": 20, "skip": 0, "sort[]": "-created"}
+        ).get("result") or []
+        ended = [m for m in masters if m.get("ended") and m.get("reportStatus") in ("pass", "fail")]
+        if not ended:
+            pytest.skip("no finished KPI-bearing run in the account's recent history")
+        master_id = str(ended[0]["id"])
 
     labels = t.get("/data/labels", {"master_id": master_id})
     assert isinstance(labels.get("result"), list)
