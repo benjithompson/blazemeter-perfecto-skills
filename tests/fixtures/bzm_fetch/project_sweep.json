@@ -9,6 +9,20 @@
       }
     },
     {
+      "path": "/tests/201",
+      "response": {
+        "result": { "id": 201, "name": "checkout-flow", "projectId": 101 },
+        "error": null
+      }
+    },
+    {
+      "path": "/tests/202",
+      "response": {
+        "result": { "id": 202, "name": "search-api (canonical)", "projectId": 101 },
+        "error": null
+      }
+    },
+    {
       "path": "/masters",
       "params": { "projectId": "101", "skip": "0" },
       "response": {

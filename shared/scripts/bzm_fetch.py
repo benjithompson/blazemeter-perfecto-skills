@@ -442,16 +442,26 @@ class Sweeper:
 
     # - windowed scope listing (server-side time filter; the sweep's entry point) -
 
-    def masters_in_window(self, scope: dict, from_ts: int, to_ts: int) -> list[dict]:
-        """List every master in the scope whose start falls inside [from, to).
+    def masters_in_window(
+        self, scope: dict, from_ts: int, to_ts: int, max_pages: int = 200
+    ) -> list[dict]:
+        """List every master in the scope that overlaps [from, to).
 
         One paged `/masters` listing with the server-side `startTime`/`endTime`
         filter (epoch seconds) — cost scales with runs-in-window, never with the
         size of the test catalog. Master rows carry `testId`, `projectId`,
         `reportStatus`, and `maxUsers`, so no per-test iteration is needed.
-        Results are re-filtered client-side as a defensive check. Root failure
-        raises (scope-level); the account-wide listing may omit `total`, so
-        paging stops on a short page.
+        Results are re-filtered client-side (overlap semantics, matching
+        `judge_test`), which also guards against the filter being ignored: the
+        listing is newest-first, so a page entirely older than the window stops
+        paging, and `max_pages` (10,000 runs) bounds a pathological walk. The
+        account-wide listing may omit `total`, so a short page is the normal stop.
+
+        Failure posture: the FIRST page raising is a scope-level failure and
+        propagates (bad credentials/scope must not read as an empty window); a
+        failure on a LATER page degrades — the pages already fetched are
+        returned and the failure lands in coverage, so a partial digest beats
+        no digest.
         """
         scope_param = (
             {"projectId": scope["project_id"]}
@@ -462,24 +472,31 @@ class Sweeper:
         )
         masters: list[dict] = []
         skip = 0
-        while True:
-            page = self.t.get(
-                "/masters",
-                {
-                    **scope_param,
-                    "limit": PAGE_SIZE,
-                    "skip": skip,
-                    "sort[]": "-created",
-                    "startTime": from_ts,
-                    "endTime": to_ts,
-                },
-            )
-            self.cov.ok()
+        for _ in range(max_pages):
+            try:
+                page = self.t.get(
+                    "/masters",
+                    {
+                        **scope_param,
+                        "limit": PAGE_SIZE,
+                        "skip": skip,
+                        "sort[]": "-created",
+                        "startTime": from_ts,
+                        "endTime": to_ts,
+                    },
+                )
+                self.cov.ok()
+            except Exception as exc:  # noqa: BLE001 - later pages degrade into coverage
+                if skip == 0:
+                    raise
+                self.cov.fail("masters", "window-page:%d" % skip, exc)
+                break
             batch = page.get("result") or []
             masters.extend(m for m in batch if overlaps_window(m, from_ts, to_ts))
+            if len(batch) < PAGE_SIZE or page_is_older_than(batch, from_ts):
+                break
             skip += PAGE_SIZE
-            if len(batch) < PAGE_SIZE:
-                return masters
+        return masters
 
     def project_context(self, project_id, cache: dict) -> dict:
         """Resolve {project, workspace} names for grouping, cached per project id."""
@@ -497,14 +514,39 @@ class Sweeper:
         cache[project_id] = context
         return context
 
+    def test_name(self, test_id, cache: dict, fallback: str | None) -> str | None:
+        """Canonical test name from /tests/{id}, cached; falls back to the run label.
+
+        Master rows carry a per-run label that can be a custom execution name or
+        go stale after a rename — the /tests object is the identity the
+        scoreboard should show. One request per ACTIVE test (cost scales with
+        activity, like everything else here); a failed read degrades to the
+        newest run's label via coverage.
+        """
+        if test_id in cache:
+            return cache[test_id]
+        try:
+            test = self.t.get("/tests/%s" % test_id).get("result") or {}
+            self.cov.ok()
+            name = test.get("name") or fallback
+        except Exception as exc:  # noqa: BLE001 - name is cosmetic, id still groups
+            self.cov.fail("test", "test:%s" % test_id, exc)
+            name = fallback
+        cache[test_id] = name
+        return name
+
     # - executions & reports -
 
-    def masters_for_test(self, test_id, from_ts: int, max_pages: int = 20) -> list[dict]:
+    def masters_for_test(
+        self, test_id, from_ts: int, max_pages: int = 20, stop_when=None
+    ) -> list[dict]:
         """List a test's masters newest-first, stopping once a page predates the window.
 
         `max_pages` also serves the baseline lookback: history beyond the window is
         fetched anyway until the stop condition, capped so one hyperactive test
-        cannot stall the sweep.
+        cannot stall the sweep. `stop_when(masters)` lets a caller end paging as
+        soon as the accumulated rows satisfy it (e.g. a passing run for baseline
+        resolution has appeared).
         """
         masters: list[dict] = []
         skip = 0
@@ -521,6 +563,8 @@ class Sweeper:
             batch = page.get("result") or []
             masters.extend(batch)
             if not batch or page_is_older_than(batch, from_ts):
+                break
+            if stop_when is not None and stop_when(masters):
                 break
             skip += PAGE_SIZE
             total = page.get("total")
@@ -725,11 +769,13 @@ def cmd_plan(args, transport) -> int:
     cov = Coverage()
     sweeper = Sweeper(transport, cov, concurrency=args.concurrency)
     scope = _scope_from_args(args)
-    masters = sweeper.masters_in_window(scope, from_ts, to_ts)
+    # Same normalization as sweep: string test ids (matching pins/baseline-file
+    # keys and the digest), rows without a testId dropped.
+    masters = [m for m in sweeper.masters_in_window(scope, from_ts, to_ts) if m.get("testId") is not None]
 
     by_test: dict = {}
     for m in masters:
-        by_test.setdefault(m.get("testId"), []).append(m)
+        by_test.setdefault(str(m.get("testId")), []).append(m)
     plan = {
         "scope": scope,
         "window": {"from": from_ts, "to": to_ts},
@@ -745,6 +791,7 @@ def cmd_plan(args, transport) -> int:
             }
             for tid, runs in sorted(by_test.items(), key=lambda kv: -len(kv[1]))
         ],
+        "coverage": {"http_attempted": cov.attempted, "http_failed": cov.failed},
     }
     print(json.dumps(plan, indent=2))
     return 0
@@ -773,24 +820,47 @@ def cmd_sweep(args, transport) -> int:
 
     # One server-side-filtered listing finds every run in the window across the
     # whole scope — idle tests are never touched, so cost scales with activity.
-    window_masters = sweeper.masters_in_window(scope, from_ts, to_ts)
+    # Rows without a testId can't be judged or drilled into; drop them up front
+    # so every count in the digest derives from the same set.
+    window_masters = [
+        m for m in sweeper.masters_in_window(scope, from_ts, to_ts) if m.get("testId") is not None
+    ]
     by_test: dict = {}
     for m in window_masters:
         by_test.setdefault(str(m.get("testId")), []).append(m)
 
     context_cache: dict = {}
+    name_cache: dict = {}
 
     def process(item):
         test_id, in_window = item
         # Baseline lookback (last-passing) needs history beyond the window — but
-        # only when nothing pins this test's baseline, and only for ACTIVE tests.
-        if test_id in pins or test_id in baseline_file:
+        # only when nothing pins this test's baseline, only for ACTIVE tests, and
+        # only when the window itself holds no non-candidate passing run (a pass
+        # already in the window is always newer than any pre-window pass).
+        kpi_in = [m for m in in_window if run_bucket(m) == "kpi"]
+        candidate = pick_candidate(kpi_in)
+        cand_id = str(candidate.get("id")) if candidate else None
+
+        def has_baseline_pass(masters):
+            return any(
+                str(m.get("reportStatus")) == "pass" and str(m.get("id")) != cand_id
+                for m in masters
+            )
+
+        if test_id in pins or test_id in baseline_file or has_baseline_pass(in_window):
             masters = in_window
         else:
-            masters = sweeper.masters_for_test(test_id, from_ts) or in_window
+            masters = (
+                sweeper.masters_for_test(test_id, from_ts, stop_when=has_baseline_pass)
+                or in_window
+            )
         context = sweeper.project_context(in_window[0].get("projectId"), context_cache)
         row = {
-            "test": {"id": test_id, "name": in_window[0].get("name")},
+            "test": {
+                "id": test_id,
+                "name": sweeper.test_name(test_id, name_cache, in_window[0].get("name")),
+            },
             "project": context["project"],
             "workspace": context["workspace"],
         }

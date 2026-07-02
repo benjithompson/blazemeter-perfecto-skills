@@ -176,28 +176,30 @@ The variant **reuses every guarantee** of the single-test step — it changes on
 2. **Choose the scope to roll up over.** The resolved scope is either the **project** (roll up its
    tests) or the **workspace** (roll up across all its projects), depending on what the skill
    declares. Stop at that level — **do not** descend to a single test.
-3. **Enumerate the tests in that scope** by paging `blazemeter_tests list` (`limit: 50`) to
-   completion. Enumeration is the point here, so a full first page is **not** a reason to ask the
-   user to name one test — keep paging and operate over the whole set. (If the scope is so large
-   that enumerating is impractical, say so and ask the user to **narrow the scope** to a specific
-   project — never silently truncate to "the first page".)
-4. **Honor the per-account AI Consent gate** (§4.4) on the resolved account before enumerating, the
-   same as the single-test step.
-5. **Display the resolved scope and the count of tests it covers** before acting — the cross-test
-   analogue of §4.5 — so the run is auditable and the user sees what is in scope:
+3. **Census the window, don't walk the catalog** (ADR-0019, window-first amendment). Do **not**
+   page `blazemeter_tests list` over the scope — activity, not catalog size, is the cost driver.
+   Run the engine's window census (`bzm_fetch.py plan` with the scope flag and the resolved
+   window) to learn how many **runs, across how many tests,** fall in the window; idle tests are
+   never touched. A large census (hundreds of in-window runs) is a reason to **offer narrowing**
+   the scope or shortening the window — never silently truncate.
+4. **Honor the per-account AI Consent gate** (§4.4) on the resolved account before invoking the
+   engine, the same as the single-test step.
+5. **Display the resolved scope and the window census** before acting — the cross-test analogue
+   of §4.5 — so the run is auditable and the user sees what is in scope:
 
    ```
    Scope:      Project <project name>  (ID: <project_id>)
    Workspace:  <workspace name>  (ID: <workspace_id>)
    Account:    <account name>  (ID: <account_id>)
-   Tests:      <N> tests in scope
+   Window:     <from> → <to>
+   Activity:   <N> runs across <M> tests in the window
    ```
 
 6. **Carry the resolved scope forward** as conversational memory and **never persist it** (§4.6),
    exactly as the single-test step carries the account/workspace forward.
 
 In short: single-test skills resolve **to a test**; cross-test skills resolve **to a scope and
-enumerate its tests**. Same don't-assume guarantees, one fewer level of narrowing.
+census its window**. Same don't-assume guarantees, one fewer level of narrowing.
 
 ## 5. Integration: MCP for the control plane, deterministic scripts for bulk data pulls
 

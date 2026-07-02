@@ -152,7 +152,7 @@ The output is fully self-contained (offline, no CDN — safe to email): the same
 
 ## Step 6 — Handle the edge cases gracefully
 
-- **Empty window (nothing ran):** `tests_ran: 0` → **do not** fabricate a scorecard or render an empty HTML shell. Confirm the scope and window, state plainly that **nothing ran in this window**, note how many tests are in scope, and offer to widen the window.
+- **Empty window (nothing ran):** `tests_ran: 0` → **do not** fabricate a scorecard or render an empty HTML shell. Confirm the scope and window, state plainly that **nothing ran in this window**, and offer to widen the window.
 - **Partial coverage:** surface the sweep's `coverage` block honestly — skipped partial runs, failed fetches (with counts), anomaly stats unavailable — in both the report narrative and the summary you give the user. Never present a partial sweep as complete.
 - **No baseline for a test:** its row reads `no baseline`; judge it on absolute pass/fail only.
 - **Drill-ins stay interactive:** when the user asks about one incident ("what happened in run 9101?"), that is a *single-run* question — answer it with the MCP (`blazemeter_execution read`, `read_all_reports`, `read_anomalies_stats` for **that** execution id, or hand off to `bzm-triage-failure`). To describe a test's SLA rules in prose, `blazemeter_tests read` gives its `failure_criteria.meta.*` labels. Don't re-run the sweep for a drill-in.
@@ -163,7 +163,7 @@ After rendering, tell the user:
 
 ```
 ## BlazeMeter Portfolio Report: <scope name>
-**Window:** <start> – <end>   |   **Tests in scope:** N (<idle> idle, <skipped> partial runs skipped)
+**Window:** <start> – <end>   |   **Runs in window:** N across <M> tests (<skipped> partial runs skipped)
 **Verdict:** <STABLE / REGRESSED / AT-RISK / CRITICAL>
 **Report file:** <path to the HTML>
 
