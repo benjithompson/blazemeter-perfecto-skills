@@ -1,5 +1,11 @@
 # Report renders from an in-skill, model-filled, self-contained HTML template (no local interpreter)
 
+> **Status:** Amended by [ADR-0020](0020-consolidate-single-test-analysis.md) — `bzm-report` was
+> consolidated into `bzm-test-analysis`, and the template moved from the skill's own `assets/` to
+> `shared/assets/report-template.html` (it now also serves `bzm-daily-digest` and
+> `bzm-portfolio-report`). The mechanism decided here — model-filled, self-contained, no local
+> interpreter — is unchanged.
+
 The `bzm-report` skill produces its HTML by filling a **static, self-contained template
 shipped inside the skill** (`skills/bzm-report/assets/report-template.html`) with the Report
 data model, rather than shelling out to a Python renderer. The skill reads the template, replaces a

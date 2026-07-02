@@ -1,5 +1,8 @@
 # Defer the marketplace; load direct from a git checkout during active development
 
+> **Note:** originally filed as ADR-0014; renumbered to 0021 to resolve a number collision with
+> [0014-report-as-in-skill-model-filled-html-template.md](0014-report-as-in-skill-model-filled-html-template.md).
+
 **Amends [ADR-0006](0006-distribution-plugin-marketplace.md).** While the plugin is still early and
 changing fast, it is consumed as a **skills-directory plugin** loaded **in place** from a local git
 checkout — symlink the repo into `~/.claude/skills/` and Claude Code discovers it as

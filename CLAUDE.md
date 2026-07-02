@@ -35,8 +35,8 @@ plugin is built out further; the manifest is kept ready for that. Layout:
   manually-configured BlazeMeter MCP is deduped by endpoint (higher scope wins). Perfecto is not
   bundled yet (no Perfecto skills). See ADR-0015.
 
-CI (`.github/workflows/ci.yml`) lints every `SKILL.md` frontmatter, smoke-tests shared scripts'
-`--help`, and runs the tests.
+CI (`.github/workflows/ci.yml`) lints every `SKILL.md` frontmatter, lints user-facing surfaces
+for contributor-doc references, smoke-tests shared scripts' `--help`, and runs the tests.
 
 ## Making changes take effect
 

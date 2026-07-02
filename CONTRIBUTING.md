@@ -39,9 +39,9 @@ short, every skill:
 - contains **no** personal absolute paths and **no** credentials.
 
 Shared, deterministic logic (scripts) goes in `shared/scripts/` and is referenced from skills via
-`${CLAUDE_PLUGIN_ROOT}`; it gets fixture tests under `tests/`. Skills that ship a static asset (e.g.
-the `bzm-report` HTML template) keep it in the skill's own `assets/` and fill it in-skill —
-no interpreter shelled out at runtime.
+`${CLAUDE_PLUGIN_ROOT}`; it gets fixture tests under `tests/`. Static assets shared by skills (e.g.
+the branded report HTML template at `shared/assets/report-template.html`) live in `shared/assets/`
+and are filled in-skill — no interpreter shelled out at runtime.
 
 ## Running checks locally
 
@@ -49,14 +49,17 @@ no interpreter shelled out at runtime.
 # 1. Frontmatter lint (no dependencies — standard-library Python only)
 python shared/scripts/lint_frontmatter.py skills
 
-# 2. Tests for the deterministic layer
+# 2. User-facing-surface lint (no contributor-doc references in skills/commands)
+python shared/scripts/lint_user_facing.py skills commands
+
+# 3. Tests for the deterministic layer
 python -m pip install -r requirements-dev.txt
 pytest
 ```
 
-CI runs exactly these on every push and pull request (frontmatter lint + script `--help` smoke +
-tests). A PR is ready when CI is green and the Definition of Done in `shared/conventions.md` is
-satisfied.
+CI runs these on every push and pull request (frontmatter lint — including a check that the linter
+rejects a malformed fixture — user-facing-surface lint, script `--help` smoke, and tests). A PR is
+ready when CI is green and the Definition of Done in `shared/conventions.md` is satisfied.
 
 ## Credentials & safety
 

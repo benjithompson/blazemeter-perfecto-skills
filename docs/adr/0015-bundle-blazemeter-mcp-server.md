@@ -28,7 +28,7 @@ method and is intentionally not used here.
 
 **Desktop caveat.** The desktop app inherits only `PATH` (+ a few Claude vars) from the shell
 profile, so users set `BLAZEMETER_API_KEY` via **Settings → Claude Code → local environment
-editor**; the bundled server reads it from there. (See ADR-0014 for the skills-dir load model —
+editor**; the bundled server reads it from there. (See ADR-0021 for the skills-dir load model —
 `.mcp.json` changes need `/reload-plugins`.)
 
 **Scope: BlazeMeter only.** Perfecto MCP is **not** bundled. The plugin ships no Perfecto skills, and

@@ -1,6 +1,6 @@
 # Distribution: a Claude Code plugin published via a marketplace
 
-> **Amended by [ADR-0014](0014-defer-marketplace-load-direct-from-git.md):** the marketplace path is
+> **Amended by [ADR-0021](0021-defer-marketplace-load-direct-from-git.md):** the marketplace path is
 > deferred during active development in favor of loading direct from a local git checkout
 > (skills-directory plugin). The marketplace design below still stands as the eventual distribution
 > mechanism.

@@ -28,4 +28,3 @@ __pycache__/
 
 # Generated reports (default output dir of the report/portfolio/digest skills)
 bzm-reports/
-blazemeter-reports/
