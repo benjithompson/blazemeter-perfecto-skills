@@ -1,5 +1,5 @@
 {
-  "comment": "Canned v4 responses for a small project sweep: project 101 with two tests. Shapes mirror shared/scripts/API_NOTES.md (scrubbed from real responses). Test 201 passes but regresses p95 vs its baseline (8000, pinned via the committed file) and has one near-100%-error endpoint; test 202's newest run fails outright with a 28% error rate and two anomalies.",
+  "comment": "Canned v4 responses for a small project sweep: project 101 with two tests. Shapes mirror shared/scripts/API_NOTES.md (scrubbed from real responses). The window-first sweep lists in-window masters with one server-side-filtered /masters call (projectId + startTime/endTime); per-test /masters routes serve the baseline lookback. Test 201 passes but regresses p95 vs its baseline (8000, pinned via the committed file) and has one near-100%-error endpoint; test 202's newest run fails outright with a 28% error rate and two anomalies.",
   "routes": [
     {
       "path": "/projects/101",
@@ -9,14 +9,29 @@
       }
     },
     {
-      "path": "/tests",
-      "params": { "projectId": "101" },
+      "path": "/tests/201",
+      "response": {
+        "result": { "id": 201, "name": "checkout-flow", "projectId": 101 },
+        "error": null
+      }
+    },
+    {
+      "path": "/tests/202",
+      "response": {
+        "result": { "id": 202, "name": "search-api (canonical)", "projectId": 101 },
+        "error": null
+      }
+    },
+    {
+      "path": "/masters",
+      "params": { "projectId": "101", "skip": "0" },
       "response": {
         "result": [
-          { "id": 201, "name": "checkout-flow", "projectId": 101 },
-          { "id": 202, "name": "search-api", "projectId": 101 }
+          { "id": 9101, "testId": 202, "projectId": 101, "name": "search-api", "created": 1600000, "updated": 1603600, "ended": 1603600, "reportStatus": "fail", "maxUsers": 10 },
+          { "id": 9100, "testId": 202, "projectId": 101, "name": "search-api", "created": 1550000, "updated": 1553600, "ended": 1553600, "reportStatus": "pass", "maxUsers": 10 },
+          { "id": 9001, "testId": 201, "projectId": 101, "name": "checkout-flow", "created": 1500000, "updated": 1503600, "ended": 1503600, "reportStatus": "pass", "maxUsers": 20 }
         ],
-        "total": 2, "skip": 0, "limit": 50, "error": null
+        "skip": 0, "limit": 50, "error": null
       }
     },
     {
@@ -24,8 +39,8 @@
       "params": { "testId": "201", "skip": "0" },
       "response": {
         "result": [
-          { "id": 9001, "name": "checkout-flow", "created": 1500000, "updated": 1503600, "ended": 1503600, "reportStatus": "pass" },
-          { "id": 8000, "name": "checkout-flow", "created": 500000, "updated": 503600, "ended": 503600, "reportStatus": "pass" }
+          { "id": 9001, "testId": 201, "projectId": 101, "name": "checkout-flow", "created": 1500000, "updated": 1503600, "ended": 1503600, "reportStatus": "pass", "maxUsers": 20 },
+          { "id": 8000, "testId": 201, "projectId": 101, "name": "checkout-flow", "created": 500000, "updated": 503600, "ended": 503600, "reportStatus": "pass", "maxUsers": 20 }
         ],
         "total": 2, "skip": 0, "limit": 50, "error": null
       }
@@ -35,9 +50,9 @@
       "params": { "testId": "202", "skip": "0" },
       "response": {
         "result": [
-          { "id": 9101, "name": "search-api", "created": 1600000, "updated": 1603600, "ended": 1603600, "reportStatus": "fail" },
-          { "id": 9100, "name": "search-api", "created": 1550000, "updated": 1553600, "ended": 1553600, "reportStatus": "pass" },
-          { "id": 8100, "name": "search-api", "created": 400000, "updated": 403600, "ended": 403600, "reportStatus": "error" }
+          { "id": 9101, "testId": 202, "projectId": 101, "name": "search-api", "created": 1600000, "updated": 1603600, "ended": 1603600, "reportStatus": "fail", "maxUsers": 10 },
+          { "id": 9100, "testId": 202, "projectId": 101, "name": "search-api", "created": 1550000, "updated": 1553600, "ended": 1553600, "reportStatus": "pass", "maxUsers": 10 },
+          { "id": 8100, "testId": 202, "projectId": 101, "name": "search-api", "created": 400000, "updated": 403600, "ended": 403600, "reportStatus": "error", "maxUsers": 10 }
         ],
         "total": 3, "skip": 0, "limit": 50, "error": null
       }

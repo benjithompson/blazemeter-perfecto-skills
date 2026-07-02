@@ -35,18 +35,19 @@ Stop at that level — **do not** descend to a single test, and resolve only the
 
 Check the resolved **account's** AI-consent state via `blazemeter_account read`. If the account has **not** consented, **stop with a clear message** — e.g. `Account Acme (12345) has not enabled AI consent` — before invoking the engine or fetching anything. (The consent gate lives here, in the MCP step, on purpose — it must pass **before** any bulk pull runs.)
 
-### Step 0d — Census the scope with `plan` (the practicality checkpoint)
+### Step 0d — Census the window with `plan` (the practicality checkpoint)
 
-Do **not** enumerate tests by paging MCP lists — run the engine's fast census instead. It counts projects/tests using one cheap request per level and prints a small JSON to stdout:
+Do **not** enumerate the test catalog — activity is what costs, so the census is **window-first**: one server-side-filtered listing reports how many runs (across how many tests) fall in the window. Resolve the window (Step 1) first, then:
 
 ```bash
-python ${CLAUDE_PLUGIN_ROOT}/shared/scripts/bzm_fetch.py plan --project-id <id>
+python ${CLAUDE_PLUGIN_ROOT}/shared/scripts/bzm_fetch.py plan --project-id <id> \
+  --from <window start> --to <window end>       # ISO-8601 or epoch; defaults to the last 24h
 # or:  --workspace-id <id>     (exactly one scope flag)
 ```
 
 The engine reads the **same credentials the MCP uses** from the environment — `API_KEY_ID` + `API_KEY_SECRET`, or `BLAZEMETER_API_KEY` (a path to a JSON key file). Never pass keys on the command line. If it exits with a credentials error, show the user which variables to set and stop.
 
-**Practicality guard:** show the census to the user. A quarter-deep sweep over a large scope (many projects, hundreds of tests) is heavy on wall-clock even for the engine — say how many projects/tests are in play and offer to **narrow to a specific project** (or shorten the window) or proceed with the full sweep. Never silently truncate the scope.
+**Practicality guard:** show the census to the user. A quarter is a long window — the sweep's cost scales with `runs_in_window` (report fetches per run plus a baseline lookup per active test), so hundreds of runs is worth a heads-up and an offer to **narrow to a specific project or shorten the window** before proceeding. Never silently truncate the scope.
 
 ### Step 0e — Display the resolved scope and the census, then continue
 
@@ -57,7 +58,7 @@ Scope:      Project <project name>  (ID: <project_id>)        ← or "Workspace 
 Workspace:  <workspace name>  (ID: <workspace_id>)
 Account:    <account name>  (ID: <account_id>)
 Window:     <resolved window, e.g. Q2 2026: 2026-04-01 → 2026-06-30>
-Tests:      <N> tests in scope
+Activity:   <N> runs across <M> tests in the window           ← from the plan census
 ```
 
 Carry this resolved scope forward as **conversational memory** for later skills in the same conversation (display it, allow a one-step "switch"); **never persist it** to disk.
@@ -137,7 +138,7 @@ Build a single JSON object with **`kind: "portfolio"`** matching the portfolio d
 }
 ```
 
-Per-row sourcing: `name`/`id` from the sweep entry's `test_name`/`test_id`; `runs` = `kpi_runs` (evaluable runs only — report `skipped_partial` in the coverage footer, don't fold it in); the remaining columns from Step 3. **Idle tests** (counted in `idle_tests`, absent from `tests[]` in the sweep JSON) get **no scorecard row** — note the count in the coverage footer instead. Omit `incidents` (empty array) when there are none — the template renders a tidy "none" state. Your contribution is the `summary` block: verdict, headline, and a short expert narrative grounded in the sweep's numbers. Keep the JSON ready to inject in Step 5.
+Per-row sourcing: `name`/`id` from the sweep entry's `test_name`/`test_id`; `runs` = `kpi_runs` (evaluable runs only — report `skipped_partial` in the coverage footer, don't fold it in); the remaining columns from Step 3. **Idle tests are never fetched** — the sweep is window-first, so `tests[]` contains only tests that ran (`runs_in_window`/`tests_ran` at the top level); the scorecard simply has no idle rows. Omit `incidents` (empty array) when there are none — the template renders a tidy "none" state. Your contribution is the `summary` block: verdict, headline, and a short expert narrative grounded in the sweep's numbers. Keep the JSON ready to inject in Step 5.
 
 ## Step 5 — Emit the branded Portfolio Report (template fill, no interpreter)
 
@@ -151,7 +152,7 @@ The output is fully self-contained (offline, no CDN — safe to email): the same
 
 ## Step 6 — Handle the edge cases gracefully
 
-- **Empty window (nothing ran):** `tests_ran: 0` → **do not** fabricate a scorecard or render an empty HTML shell. Confirm the scope and window, state plainly that **nothing ran in this window**, note how many tests are in scope, and offer to widen the window.
+- **Empty window (nothing ran):** `tests_ran: 0` → **do not** fabricate a scorecard or render an empty HTML shell. Confirm the scope and window, state plainly that **nothing ran in this window**, and offer to widen the window.
 - **Partial coverage:** surface the sweep's `coverage` block honestly — skipped partial runs, failed fetches (with counts), anomaly stats unavailable — in both the report narrative and the summary you give the user. Never present a partial sweep as complete.
 - **No baseline for a test:** its row reads `no baseline`; judge it on absolute pass/fail only.
 - **Drill-ins stay interactive:** when the user asks about one incident ("what happened in run 9101?"), that is a *single-run* question — answer it with the MCP (`blazemeter_execution read`, `read_all_reports`, `read_anomalies_stats` for **that** execution id, or hand off to `bzm-triage-failure`). To describe a test's SLA rules in prose, `blazemeter_tests read` gives its `failure_criteria.meta.*` labels. Don't re-run the sweep for a drill-in.
@@ -162,7 +163,7 @@ After rendering, tell the user:
 
 ```
 ## BlazeMeter Portfolio Report: <scope name>
-**Window:** <start> – <end>   |   **Tests in scope:** N (<idle> idle, <skipped> partial runs skipped)
+**Window:** <start> – <end>   |   **Runs in window:** N across <M> tests (<skipped> partial runs skipped)
 **Verdict:** <STABLE / REGRESSED / AT-RISK / CRITICAL>
 **Report file:** <path to the HTML>
 
@@ -181,7 +182,7 @@ Open the HTML file to see the full branded scorecard (per-test health, SLA-compl
 ## Gotchas
 
 - **Never do the bulk pull over MCP.** Chaining `blazemeter_*` list/read calls per test and per execution burns enormous time and tokens at portfolio scale — a quarter across a suite is thousands of payloads — and is exactly what the engine exists for. MCP is for Step 0's interactive picks, the consent gate, and single-run drill-ins afterward — nothing in between.
-- **Census, don't enumerate by hand.** Step 0 resolves the scope and runs `plan` for the census — no paging `blazemeter_tests list` to count tests. A big census is a reason to *offer narrowing* to a project (or a shorter window), never to silently truncate.
+- **Census the window, don't walk the catalog.** Step 0 resolves the scope and runs `plan` for the **window census** — no paging `blazemeter_tests list`, and idle tests are never touched. A big census is a reason to *offer narrowing* to a project (or a shorter window), never to silently truncate.
 - **Consent before sweep.** The AI-consent check (Step 0c) must pass before any `plan`/`sweep` invocation — the gate lives in the MCP layer, and the engine assumes it already happened.
 - **Credentials are environment-only.** The engine reads `API_KEY_ID`/`API_KEY_SECRET` or `BLAZEMETER_API_KEY` (a key-file path) — the same variables the MCP uses. Never put a key on the command line, in the data model, or in the generated HTML (it's meant to be emailed — keep it secret-free).
 - **Trust the engine's arithmetic.** Deltas, normalization, baseline choice, and status buckets are computed deterministically. Your derivations on top (SLA %, trend arrow, health) are simple mappings of those numbers — if a number looks wrong, say so and show it; don't silently recompute or re-fetch.

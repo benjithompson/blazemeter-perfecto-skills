@@ -246,12 +246,21 @@ def test_sweep_produces_the_digest(tmp_path, capsys):
 
     assert rc == 0
     assert digest["schema_version"] == bzm_fetch.SCHEMA_VERSION
-    assert digest["tests_in_scope"] == 2 and digest["tests_ran"] == 2
+    assert digest["runs_in_window"] == 3 and digest["tests_ran"] == 2
     assert digest["coverage"]["http_failed"] == 0
+    # Window-first: the catalog is never enumerated, only in-window activity.
+    assert not any(path == "/tests" for path, _ in transport.calls)
 
     # Failures sort first: search-api (one failing run) ahead of checkout-flow.
     first, second = digest["tests"]
     assert first["test_id"] == "202"
+    # test_name is the CANONICAL /tests name, not the run's (possibly custom) label.
+    assert first["test_name"] == "search-api (canonical)"
+    # 202's window already holds a non-candidate pass (9100), so no per-test
+    # baseline-lookback listing is needed for it.
+    assert not any(
+        path == "/masters" and params.get("testId") == "202" for path, params in transport.calls
+    )
     assert first["failed"] == 1 and first["passed"] == 1
     assert first["baseline"] == {"source": "last-passing", "execution_id": "9100"}
     assert first["candidate_execution_id"] == "9101"  # newest FAILING run wins
@@ -273,7 +282,7 @@ def test_sweep_produces_the_digest(tmp_path, capsys):
 
     # stdout stays a tiny human summary, not data
     out = capsys.readouterr().out
-    assert "2 ran in window" in out and "wrote" in out
+    assert "across 2 tests" in out and "wrote" in out
 
 
 def test_sweep_conversational_pin_beats_last_passing(tmp_path):
@@ -306,7 +315,7 @@ def test_sweep_pin_pointing_at_candidate_yields_nothing_to_compare(tmp_path):
 def test_sweep_empty_window_reports_idle_not_fabricated(tmp_path):
     rc, digest, _ = run_project_sweep(tmp_path, from_="3000000", to="4000000")
     assert rc == 0
-    assert digest["tests_ran"] == 0 and digest["idle_tests"] == 2
+    assert digest["tests_ran"] == 0 and digest["runs_in_window"] == 0
     assert digest["tests"] == []
 
 
@@ -324,15 +333,86 @@ def test_sweep_exceeding_max_failure_rate_exits_nonzero(tmp_path, capsys):
     assert "exceeds --max-failure-rate" in capsys.readouterr().err
 
 
-def test_plan_census_counts_without_fetching_reports(tmp_path, capsys):
+def test_plan_window_census_counts_runs_without_reports(tmp_path, capsys):
     transport = FakeTransport.from_fixture("project_sweep.json")
     args = argparse.Namespace(account_id=None, workspace_id=None, project_id="101",
-                              concurrency=2)
+                              concurrency=2, from_="1000000", to="2000000")
     rc = bzm_fetch.cmd_plan(args, transport)
     assert rc == 0
     plan = json.loads(capsys.readouterr().out)
-    assert plan["tests"] == 2 and plan["projects"] == 1
-    assert not any("/masters" in path for path, _ in transport.calls)
+    assert plan["runs_in_window"] == 3 and plan["tests_ran"] == 2
+    assert plan["per_test"][0]["runs"] == 2  # busiest test first
+    assert plan["per_test"][0]["test_id"] == "202"  # string ids, matching the sweep/pins
+    # Census is ONE windowed /masters listing: no catalog, no reports.
+    assert not any(path == "/tests" for path, _ in transport.calls)
+    assert not any("/reports/" in path for path, _ in transport.calls)
+
+
+def _window_scope():
+    return {"account_id": "9", "workspace_id": None, "project_id": None}
+
+
+def _master(i, created):
+    return {"id": i, "testId": 1, "projectId": 2, "name": "t", "created": created,
+            "updated": created + 60, "ended": created + 60, "reportStatus": "pass"}
+
+
+class PagedTransport:
+    """Serves scripted /masters pages (or exceptions) in order."""
+
+    def __init__(self, pages):
+        self.pages = list(pages)
+        self.calls = 0
+
+    def get(self, path, params=None):
+        self.calls += 1
+        page = self.pages.pop(0)
+        if isinstance(page, Exception):
+            raise page
+        return {"result": page, "error": None}
+
+
+def test_masters_in_window_mid_listing_failure_degrades_to_partial():
+    full_page = [_master(i, 1_500_000) for i in range(50)]
+    transport = PagedTransport([full_page, urllib.error.URLError("boom")])
+    cov = bzm_fetch.Coverage()
+    sweeper = bzm_fetch.Sweeper(transport, cov, concurrency=1)
+    masters = sweeper.masters_in_window(_window_scope(), 1_000_000, 2_000_000)
+    # The page already fetched survives; the failure lands in coverage.
+    assert len(masters) == 50
+    assert cov.failed == 1 and cov.failures[0]["stage"] == "masters"
+
+
+def test_masters_in_window_first_page_failure_is_scope_level():
+    transport = PagedTransport([urllib.error.URLError("denied")])
+    sweeper = bzm_fetch.Sweeper(transport, bzm_fetch.Coverage(), concurrency=1)
+    with pytest.raises(urllib.error.URLError):
+        sweeper.masters_in_window(_window_scope(), 1_000_000, 2_000_000)
+
+
+def test_masters_in_window_stops_when_server_ignores_the_filter():
+    # A server that ignores startTime/endTime returns full pages of ever-older
+    # rows; the newest-first sort means a page entirely older than the window
+    # must stop paging instead of walking the whole catalog history.
+    in_window_page = [_master(i, 1_500_000) for i in range(50)]
+    stale_page = [_master(100 + i, 500_000) for i in range(50)]
+    transport = PagedTransport([in_window_page, stale_page, stale_page, stale_page])
+    sweeper = bzm_fetch.Sweeper(transport, bzm_fetch.Coverage(), concurrency=1)
+    masters = sweeper.masters_in_window(_window_scope(), 1_000_000, 2_000_000)
+    assert len(masters) == 50  # stale rows filtered out
+    assert transport.calls == 2  # stopped on the first fully-stale page
+
+
+def test_masters_for_test_stop_when_ends_paging_early():
+    page1 = [_master(1, 1_500_000)]  # a passing run on the first page
+    transport = PagedTransport([page1 + [_master(i, 1_400_000) for i in range(49)],
+                                [_master(60, 1_300_000) for _ in range(50)]])
+    sweeper = bzm_fetch.Sweeper(transport, bzm_fetch.Coverage(), concurrency=1)
+    got = sweeper.masters_for_test(
+        1, 1_000_000, stop_when=lambda ms: any(m.get("reportStatus") == "pass" for m in ms)
+    )
+    assert transport.calls == 1  # satisfied after page one, no second fetch
+    assert len(got) == 50
 
 
 # --- run-pair over the pair fixture ---------------------------------------------------
