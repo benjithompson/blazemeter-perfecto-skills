@@ -1,6 +1,6 @@
 /*
  * Golden-test harness for the in-skill Report template engine
- * (skills/bzm-report/assets/report-template.html, ADR-0014).
+ * (shared/assets/report-template.html, ADR-0014).
  *
  * The Report renders CLIENT-SIDE: the template ships a vendored, dependency-free
  * JS engine that builds every section from `window.REPORT_DATA` at open time.

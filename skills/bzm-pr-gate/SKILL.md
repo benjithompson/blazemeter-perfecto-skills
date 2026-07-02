@@ -3,7 +3,7 @@ name: bzm-pr-gate
 description: Gate a pull request on BlazeMeter performance — run the test, resolve the baseline, compare candidate vs baseline, then post a PR comment with the KPI-diff table and ship/no-ship verdict and set a commit status reflecting pass/fail. Use when asked to gate a PR on a load test, check a pull request for performance regressions, or post a BlazeMeter performance verdict back onto a PR.
 ---
 
-A flagship **Journey** that gates one pull request on performance. It orchestrates three existing skills — **bzm-run-test**, **bzm-baseline**, and **bzm-compare-runs** — and closes the loop back onto GitHub: it runs the test for the PR, resolves the baseline, compares candidate vs baseline, then **posts a PR comment** with the KPI diff + ship/no-ship verdict and **sets a commit status** on the PR's head commit. This is an interactive companion to `bzm-ci-setup` (which scaffolds the headless CI workflow); here a human drives the gate from chat against a specific PR.
+A flagship **Journey** that gates one pull request on performance. It orchestrates two existing skills — **bzm-run-test** (run the test) and **bzm-test-analysis** (resolve the baseline, compare candidate vs baseline) — and closes the loop back onto GitHub: it runs the test for the PR, resolves the baseline, compares candidate vs baseline, then **posts a PR comment** with the KPI diff + ship/no-ship verdict and **sets a commit status** on the PR's head commit. This is an interactive companion to `bzm-ci-setup` (which scaffolds the headless CI workflow); here a human drives the gate from chat against a specific PR.
 
 **This skill does not reinvent run / baseline / compare logic — it delegates to those skills' procedures and only adds the orchestration and the GitHub round-trip.** Where a step says "as in bzm-run-test" (etc.), follow that skill's prose exactly (its MCP calls, its gotchas, its output); do not duplicate or paraphrase its rules here.
 
@@ -87,9 +87,9 @@ Let this stand as confirmation. The run in Step 1 **consumes test minutes**, and
 
 Capture the resulting **candidate `execution_id`**. This is the candidate side of the comparison. (You do not need bzm-run-test's full pass/fail report here — the gate's verdict comes from the comparison in Step 3 — but its execution `pass`/`fail` status is still useful context and is carried into the verdict.)
 
-## Step 2 — Resolve the baseline (delegate to bzm-baseline)
+## Step 2 — Resolve the baseline (delegate to bzm-test-analysis)
 
-**Delegate to `bzm-baseline`** to resolve the active baseline for this test, in its resolution order **pinned → committed `.blazemeter/baseline.json` → last-passing**. Follow that skill's Step 3 exactly; it uses the shared script for the deterministic parts:
+**Delegate to `bzm-test-analysis`** to resolve the active baseline for this test, in its resolution order **pinned → committed `.blazemeter/baseline.json` → last-passing**. Follow that skill's baseline-resolution procedure exactly; it uses the shared script for the deterministic parts:
 
 1. **Conversational pin** — if the user pinned an `execution_id` earlier in this conversation, that is the baseline.
 2. **Committed CI file** — if the repo has a `.blazemeter/baseline.json`, read its entry for this `test_id` with the script (do not hand-parse JSON):
@@ -109,15 +109,15 @@ Capture the resulting **candidate `execution_id`**. This is the candidate side o
 
 **HONESTY GUARD — no baseline ⇒ cannot gate.** If all three resolve to nothing (no pin, no file entry, and `last-passing` returns `null` because there is no passing run), there is **no baseline to compare against**. **Do not post a green/passing status.** Instead, post the PR comment in its **"no baseline — cannot gate"** form (Output template below) and set the commit status to a **neutral / "cannot gate"** state (never `success`), then stop. A gate with no baseline is honestly *inconclusive*, never a pass.
 
-## Step 3 — Compare candidate vs baseline (delegate to bzm-compare-runs)
+## Step 3 — Compare candidate vs baseline (delegate to bzm-test-analysis)
 
-**Delegate to `bzm-compare-runs`** with **baseline = the Step 2 execution** and **candidate = the Step 1 execution**. Follow its procedure exactly — do not re-derive the diff math, the thresholds, the normalization, or the verdict:
+**Delegate to `bzm-test-analysis`** in its **pair-compare** mode with **baseline = the Step 2 execution** and **candidate = the Step 1 execution**. Follow its procedure exactly — do not re-derive the diff math, the thresholds, the normalization, or the verdict:
 
-- It pulls `read_all_reports` for both executions and diffs the KPIs: **avg / p90 / p95 / p99 response time, throughput (RPS), error rate** — with magnitude **and** direction.
+- It pulls both executions' reports through its deterministic engine and diffs the KPIs: **avg / p90 / p95 / p99 response time, throughput (RPS), error rate** — with magnitude **and** direction.
 - It flags a **regression** when a KPI moves the worse way by **≥ the threshold** (default 10%; let the user override), and calls out any absolute error-rate crossing of 1% / 5%.
 - It emits a **ship / no-ship** (or ship-with-caveats / inconclusive) verdict with reasons tied to numbers.
 
-**HONESTY GUARD — load configs differ ⇒ not apples-to-apples.** bzm-compare-runs' Step 2 compares the two runs' **achieved peak concurrency** (`max_concurrent_users`) and, when they differ beyond a small margin, raises a **CONFIG MISMATCH** warning, normalizes throughput as **RPS-per-VU**, and lowers confidence in latency/error-rate deltas (which don't normalize across load levels). **Surface that warning verbatim into the PR comment** — do not bury it. A regression driven by a load-level difference must read as *inconclusive / not apples-to-apples*, never as a clean code regression, and a comparison that isn't apples-to-apples must never post a confident green.
+**HONESTY GUARD — load configs differ ⇒ not apples-to-apples.** bzm-test-analysis's comparison checks the two runs' **achieved peak concurrency** (`max_concurrent_users`) and, when they differ beyond a small margin, raises a **CONFIG MISMATCH** warning, normalizes throughput as **RPS-per-VU**, and lowers confidence in latency/error-rate deltas (which don't normalize across load levels). **Surface that warning verbatim into the PR comment** — do not bury it. A regression driven by a load-level difference must read as *inconclusive / not apples-to-apples*, never as a clean code regression, and a comparison that isn't apples-to-apples must never post a confident green.
 
 Carry forward from the comparison: the **KPI diff table**, the **regression flags**, the **verdict**, and any **CONFIG MISMATCH** note.
 
@@ -191,7 +191,7 @@ After both writes, confirm to the user in chat what was posted (comment link + s
 | Error rate (%)   |   |   |   |   |   |   |
 
 ### Verdict
-<1–2 sentences leading with the decisive KPI, citing numbers — from bzm-compare-runs.>
+<1–2 sentences leading with the decisive KPI, citing numbers — from bzm-test-analysis.>
 
 <!-- posted by perforce:bzm-pr-gate -->
 ```
@@ -209,7 +209,7 @@ No baseline exists for this test — no conversational pin, no entry in
 compare against, so this PR **cannot be gated on performance**. This is **not** a pass.
 
 **To gate:** pin a baseline execution, or commit one to `.blazemeter/baseline.json`
-with the `perforce:bzm-baseline` skill, then re-run the gate.
+with the `perforce:bzm-set-baseline` skill, then re-run the gate.
 
 <!-- posted by perforce:bzm-pr-gate -->
 ```
@@ -228,9 +228,9 @@ with the `perforce:bzm-baseline` skill, then re-run the gate.
 
 ## Gotchas
 
-- **Delegate, don't duplicate.** Run, baseline-resolution, and comparison logic each live in their own skill (`bzm-run-test`, `bzm-baseline`, `bzm-compare-runs`). Follow those procedures; if one changes, this Journey inherits the change. Don't paraphrase their thresholds, polling rules, or diff math here.
+- **Delegate, don't duplicate.** Run logic lives in `bzm-run-test`; baseline-resolution and comparison logic live in `bzm-test-analysis`. Follow those procedures; if one changes, this Journey inherits the change. Don't paraphrase their thresholds, polling rules, or diff math here.
 - **No baseline is NOT a pass.** If nothing resolves (no pin, no committed file entry, no passing run), post the "cannot gate" comment and a non-`success` status — never a false green. This is the most important honesty guard.
-- **Config mismatch is NOT a clean regression — or a clean pass.** When achieved peak concurrency differs, surface bzm-compare-runs' CONFIG MISMATCH warning into the PR comment, show throughput as RPS-per-VU, and set the status to inconclusive (`error`/neutral), not `success`. A load-level difference must not masquerade as a code regression, nor be papered over as a pass.
+- **Config mismatch is NOT a clean regression — or a clean pass.** When achieved peak concurrency differs, surface bzm-test-analysis's CONFIG MISMATCH warning into the PR comment, show throughput as RPS-per-VU, and set the status to inconclusive (`error`/neutral), not `success`. A load-level difference must not masquerade as a code regression, nor be papered over as a pass.
 - **Set the status on the HEAD commit SHA, not the branch.** Capture the head SHA from `pull_request_read { method: "get" }` in Step 0b and attach the status to that SHA, so it lands on the exact commit GitHub shows on the PR. A force-push moves the head — re-read the PR if time has passed before posting.
 - **Commit-status write is the one justified GitHub fallback.** The GitHub MCP can *read* statuses/checks but not *create* them, so Step 4b uses `gh api`/REST — and says why. Everything else GitHub (reading the PR, posting the comment) stays MCP-first via `pull_request_read` and `add_issue_comment`.
 - **Never embed or echo a token.** BlazeMeter auth is the MCP's env vars; GitHub auth is the GitHub MCP / already-configured `gh`. The PR comment, the status, and chat output contain **no** credential — not even a key-file path.

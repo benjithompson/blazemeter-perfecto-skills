@@ -1,7 +1,7 @@
 """Golden/fixture tests for the DIGEST report kind at the data-model seam.
 
 The digest is the executive daily rollup rendered by the SAME vendored JS engine
-in `skills/bzm-report/assets/report-template.html` as the single-test and
+in `shared/assets/report-template.html` as the single-test and
 portfolio kinds — `kind: "digest"` selects its section group; the renderer is
 never forked. These tests run the engine under Node against the tiny DOM shim
 (`tests/assets/render_report.mjs`) and assert:
@@ -29,7 +29,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent
-TEMPLATE = REPO / "skills" / "bzm-report" / "assets" / "report-template.html"
+TEMPLATE = REPO / "shared" / "assets" / "report-template.html"
 HARNESS = REPO / "tests" / "assets" / "render_report.mjs"
 DIGEST_MODEL = REPO / "tests" / "fixtures" / "digest" / "digest-model.json"
 QUIET_MODEL = REPO / "tests" / "fixtures" / "digest" / "digest-quiet-model.json"

@@ -22,7 +22,7 @@ description: Does a thing. Use when asked to do the thing.
 
 Always resolve and **display** the full context (with ids) before acting.
 Run `python ${CLAUDE_PLUGIN_ROOT}/shared/scripts/bzm_baseline.py --help`.
-Reuse the shared script from `bzm-baseline`; read `.blazemeter/baseline.json`.
+Reuse the shared script from `bzm-set-baseline`; read `.blazemeter/baseline.json`.
 """
 
 

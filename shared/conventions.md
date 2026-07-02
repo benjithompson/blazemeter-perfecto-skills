@@ -38,7 +38,7 @@ Each `SKILL.md` opens with flat YAML frontmatter. CI runs
 
 ```markdown
 ---
-name: bzm-analyze-test
+name: bzm-test-analysis
 description: One or two sentences — what the skill does AND when to use it ("Use when …") — so the model can decide to invoke it.
 ---
 ```
@@ -61,8 +61,8 @@ python shared/scripts/lint_frontmatter.py skills
 ## 3. Namespacing
 
 The plugin is named `perforce`, so skills are invoked namespaced as
-`perforce:<skill-name>` (e.g. `perforce:bzm-analyze-test`). Name
-skills platform-first (`bzm-analyze-test`, not `analyze-test`) so later pillars
+`perforce:<skill-name>` (e.g. `perforce:bzm-test-analysis`). Name
+skills platform-first (`bzm-test-analysis`, not `test-analysis`) so later pillars
 (Perfecto, Virtual Services, API Monitoring) never collide.
 
 ## 4. The canonical Context Resolution step (required)
@@ -249,7 +249,7 @@ A `SKILL.md` body, after the frontmatter, reads top-to-bottom as a procedure:
 5. **Gotchas** — the non-obvious failure modes (pagination limits, statuses to skip, label
    fields to use instead of raw ids, normalization caveats).
 
-`bzm-analyze-test` is the reference implementation of this shape.
+`bzm-test-analysis` is the reference implementation of this shape.
 
 ## 8. Definition of Done
 
@@ -293,7 +293,7 @@ into those surfaces:
   "ADR-0017"). A citation either leaks contributor context or, worse, sends the user's agent off
   to read contributor docs mid-session.
 - **What a skill MAY reference:** its own assets and shared scripts via `${CLAUDE_PLUGIN_ROOT}`,
-  sibling skills by name (`bzm-baseline`), MCP tools, and the user's own repo files
+  sibling skills by name (`bzm-set-baseline`), MCP tools, and the user's own repo files
   (`.blazemeter/baseline.json`).
 - **Traceability lives on the dev side.** This file and the ADRs describe which skills embed
   which rule; PRs link the ADR. When a convention changes, grep the skills for the embedded

@@ -20,12 +20,10 @@ issues.
 
 | Skill | What it does |
 | --- | --- |
-| `bzm-analyze-test` | Analyzes a test's full execution history — response-time trends, regressions, tail-latency, error patterns, anomalies, per-endpoint hot spots, and SLA/failure-criteria compliance — and delivers a QA performance assessment. |
+| `bzm-test-analysis` | The single-test analysis skill, four modes in one: **trend** a test's execution history over a window (response-time trends, regressions, tail-latency, error patterns, anomalies, SLA compliance), **compare a run against the resolved baseline**, **diff two executions** with a ship / no-ship verdict, or **show/resolve/pin the active baseline** — delivered as prose or a branded, self-contained HTML Report (rendered offline from a shipped template, no local interpreter needed). |
 | `bzm-run-test` | Runs a test end-to-end — optionally sets a simple load profile (with confirmation), starts the execution, polls to completion, and reports a pass/fail summary against the test's failure criteria. |
-| `bzm-compare-runs` | Compares two executions (baseline vs candidate) — diffs response-time percentiles, throughput, and error rate with magnitude and direction, flags regressions past a threshold, and emits a ship / no-ship verdict. |
 | `bzm-triage-failure` | Deep-dives one failed or regressed run — breaks errors down by type and endpoint, ranks endpoint hot spots, summarizes anomalies, separates systemic problems from noise, and ends with prioritized next steps. |
-| `bzm-report` | Generates a branded, self-contained HTML cross-run trend & regression Report over a time window — trend charts, regression flags, and SLA compliance across many runs, rendered offline from a shipped HTML template the skill fills in (no local interpreter needed). |
-| `bzm-baseline` | Establishes, updates, and resolves the **golden baseline** run for a test — pin a specific execution, or fall back to the last passing run; reads/writes a committed `.blazemeter/baseline.json` for reproducible CI gating. The reference point `compare` and the PR gate build on. |
+| `bzm-set-baseline` | Sets the committed **golden baseline** run for a test — writes the `test_id → execution_id` entry into the version-controlled `.blazemeter/baseline.json` (diff shown before every write) that CI gates and comparisons build on. |
 | `bzm-daily-digest` | The **"analysis of the day"** — sweeps every execution across a workspace/project in a window and emits one cross-test scorecard: what ran, pass/fail, which tests newly regressed vs. their own baseline, incidents ranked by severity, and a prioritized "what needs your eyes today." |
 | `bzm-portfolio-report` | A branded, self-contained HTML scorecard across **many tests** over a window — per-test health, SLA-compliance %, trend arrows, and regression flags — the portfolio/stakeholder view, rendered offline from the same shared report engine. |
 | `bzm-ci-setup` | Scaffolds a **GitHub Actions** workflow that runs a BlazeMeter test on PRs / pushes / a schedule and gates on pass/fail or compare-vs-baseline — emitting the workflow YAML and the repo-secret wiring (credentials via `${{ secrets.BLAZEMETER_API_KEY }}`, never embedded). |
@@ -102,8 +100,8 @@ desktop-specific notes:
   `export`ed vars. So set your BlazeMeter credentials (`API_KEY_ID` + `API_KEY_SECRET`, or
   `BLAZEMETER_API_KEY`) via **Settings → Claude Code → local environment editor** (or the
   environment dropdown in the prompt box → **Local** → gear icon) — the bundled MCP server reads
-  them from there too. No language runtime is required: every skill (including `bzm-report`,
-  which fills a shipped HTML template) runs with just the MCP and credentials — nothing is shelled
+  them from there too. No language runtime is required: every skill (including the HTML Reports in
+  `bzm-test-analysis`, which fill a shipped HTML template) runs with just the MCP and credentials — nothing is shelled
   out to a local interpreter.
 
 ## Credentials
