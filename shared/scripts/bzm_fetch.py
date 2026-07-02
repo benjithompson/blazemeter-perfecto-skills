@@ -9,12 +9,8 @@ pre-aggregated JSON (size O(tests), not O(executions x sub-reports)), so the mod
 never ingests raw bulk payloads. See `docs/adr/0019-*.md` and `API_NOTES.md` (endpoint
 contract) next to this file.
 
-Subcommands:
-
-  plan   Window census — ONE server-side-filtered /masters listing per scope
-         (startTime/endTime): how many runs, across how many tests, in the
-         window. Cost scales with runs-in-window, not catalog size; a
-         whole-account census is typically a single request. Prints JSON.
+Subcommands (the window census that used to live here as `plan` moved to the
+BlazeMeter MCP's account-wide `blazemeter_execution search` — v1.3.0):
 
   sweep  The full pipeline, window-first: one filtered /masters listing finds
          every in-window run across the scope (idle tests are never touched) ->
@@ -64,7 +60,6 @@ directory, so users need nothing installed. All HTTP goes through one seam
 
 Usage:
     python bzm_fetch.py --help
-    python bzm_fetch.py plan  --account-id 12345
     python bzm_fetch.py sweep --project-id 777 \
         --from 2026-06-30T09:00:00Z --to 2026-07-01T09:00:00Z \
         --baseline-file .blazemeter/baseline.json --out digest.json
@@ -1103,52 +1098,6 @@ def _scope_from_args(args) -> dict:
     }
 
 
-def cmd_plan(args, transport) -> int:
-    """Window census: how many runs, across how many tests, in the window.
-
-    One server-side-filtered `/masters` listing — cost scales with runs in the
-    window, so a whole-account census is typically a single request. This is the
-    practicality checkpoint before `sweep`: the run/test counts ARE the sweep's
-    cost driver (the sweep adds report fetches per KPI run plus baseline lookups
-    per active test).
-    """
-    from_ts = parse_when(args.from_) if args.from_ else int(time.time()) - 86400
-    to_ts = parse_when(args.to) if args.to else int(time.time())
-    if from_ts >= to_ts:
-        print("error: --from must be earlier than --to", file=sys.stderr)
-        return 2
-
-    cov = Coverage()
-    sweeper = Sweeper(transport, cov, concurrency=args.concurrency)
-    scope = _scope_from_args(args)
-    # Same normalization as sweep: string test ids (matching pins/baseline-file
-    # keys and the digest), rows without a testId dropped.
-    masters = [m for m in sweeper.masters_in_window(scope, from_ts, to_ts) if m.get("testId") is not None]
-
-    by_test: dict = {}
-    for m in masters:
-        by_test.setdefault(str(m.get("testId")), []).append(m)
-    plan = {
-        "scope": scope,
-        "window": {"from": from_ts, "to": to_ts},
-        "runs_in_window": len(masters),
-        "tests_ran": len(by_test),
-        "projects_active": len({m.get("projectId") for m in masters}),
-        "per_test": [
-            {
-                "test_id": tid,
-                "test_name": runs[0].get("name"),
-                "runs": len(runs),
-                "statuses": sorted({str(r.get("reportStatus") or "unset") for r in runs}),
-            }
-            for tid, runs in sorted(by_test.items(), key=lambda kv: -len(kv[1]))
-        ],
-        "coverage": {"http_attempted": cov.attempted, "http_failed": cov.failed},
-    }
-    print(json.dumps(plan, indent=2))
-    return 0
-
-
 def _load_pins_and_baseline(args) -> tuple[dict[str, str], dict[str, str]]:
     pins: dict[str, str] = {}
     if args.pins:
@@ -1824,18 +1773,10 @@ def _add_window_args(parser: argparse.ArgumentParser, out_help: str) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Deterministic bulk-fetch engine for BlazeMeter sweeps "
-        "(scope census + windowed cross-test digest). Credentials come from "
-        "API_KEY_ID/API_KEY_SECRET or BLAZEMETER_API_KEY (key-file path).",
+        "(windowed cross-test digest, run history, run pairs). Credentials come "
+        "from API_KEY_ID/API_KEY_SECRET or BLAZEMETER_API_KEY (key-file path).",
     )
     sub = parser.add_subparsers(dest="command")
-
-    p_plan = sub.add_parser(
-        "plan", help="Window census: runs/tests active in the window (default last 24h)."
-    )
-    _add_scope_args(p_plan)
-    p_plan.add_argument("--from", dest="from_", help="window start (ISO-8601 or epoch; default 24h ago)")
-    p_plan.add_argument("--to", help="window end (ISO-8601 or epoch; default now)")
-    p_plan.set_defaults(func=cmd_plan)
 
     p_sweep = sub.add_parser(
         "sweep", help="Full windowed sweep -> pre-aggregated digest JSON at --out."

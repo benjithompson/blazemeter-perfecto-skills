@@ -35,19 +35,15 @@ Stop at that level — **do not** descend to a single test, and resolve only the
 
 Check the resolved **account's** AI-consent state via `blazemeter_account read`. If the account has **not** consented, **stop with a clear message** — e.g. `Account Acme (12345) has not enabled AI consent` — before invoking the engine or fetching anything. (The consent gate lives here, in the MCP step, on purpose — it must pass **before** any bulk pull runs.)
 
-### Step 0d — Census the window with `plan` (the practicality checkpoint)
+### Step 0d — Census the window with `blazemeter_execution search` (the practicality checkpoint)
 
-Do **not** enumerate the test catalog — activity is what costs, so the census is **window-first**: one server-side-filtered listing reports how many runs (across how many tests) fall in the window. Resolve the window (Step 1) first, then:
+Do **not** enumerate the test catalog — activity is what costs, so the census is **window-first** and stays in the MCP: one server-side-filtered `blazemeter_execution search` reports how many runs fall in the window. Resolve the window (Step 1) first, then:
 
-```bash
-python ${CLAUDE_PLUGIN_ROOT}/shared/scripts/bzm_fetch.py plan --project-id <id> \
-  --from <window start> --to <window end>       # ISO-8601 or epoch; defaults to the last 24h
-# or:  --workspace-id <id>     (exactly one scope flag)
-```
+- Call `blazemeter_execution search` with `account_id` (always), plus `project_id_list: [<id>]` for the project scope or `workspace_id_list: [<id>]` for a workspace scope. Express the window as `time_frame` (`custom` with `start_time`/`end_time` for a quarter; `latest`/`last24`/`lastWeek`/`lastMonth` for short windows).
+- Read the response's **`total` as the runs-in-window census**. The rows themselves are discovery metadata only (names, times, projects — no test ids, verdicts, or KPIs), so don't mine them for results — though their **project names** are fair game as hints for *where* to narrow; the sweep computes `tests_ran` and everything else.
+- Window filtering is **day-granular**: presets snap the start to midnight, and a `custom` window snaps both bounds to midnight with the **end day exclusive** — pass `end_time` as the day *after* the window end (for a quarter ending 2026-06-30, pass 2026-07-01), or the final day's runs are dropped. An approximate census is fine; the sweep applies the exact timestamps.
 
-The engine reads the **same credentials the MCP uses** from the environment — `API_KEY_ID` + `API_KEY_SECRET`, or `BLAZEMETER_API_KEY` (a path to a JSON key file). Never pass keys on the command line. If it exits with a credentials error, show the user which variables to set and stop.
-
-**Practicality guard:** show the census to the user. A quarter is a long window — the sweep's cost scales with `runs_in_window` (report fetches per run plus a baseline lookup per active test), so hundreds of runs is worth a heads-up and an offer to **narrow to a specific project or shorten the window** before proceeding. Never silently truncate the scope.
+**Practicality guard:** show the census to the user. A quarter is a long window — the sweep's cost scales with the census `total` (report fetches per run, plus a baseline lookup for each test that ran), so hundreds of runs is worth a heads-up and an offer to **narrow to a specific project or shorten the window** before proceeding. Never silently truncate the scope.
 
 ### Step 0e — Display the resolved scope and the census, then continue
 
@@ -58,7 +54,7 @@ Scope:      Project <project name>  (ID: <project_id>)        ← or "Workspace 
 Workspace:  <workspace name>  (ID: <workspace_id>)
 Account:    <account name>  (ID: <account_id>)
 Window:     <resolved window, e.g. Q2 2026: 2026-04-01 → 2026-06-30>
-Activity:   <N> runs across <M> tests in the window           ← from the plan census
+Activity:   <N> runs in the window                            ← from the search census; the sweep adds tests_ran
 ```
 
 Carry this resolved scope forward as **conversational memory** for later skills in the same conversation (display it, allow a one-step "switch"); **never persist it** to disk.
@@ -80,6 +76,7 @@ python ${CLAUDE_PLUGIN_ROOT}/shared/scripts/bzm_fetch.py sweep \
   --out <scratch>/portfolio.json
 ```
 
+- The engine reads the **same credentials the MCP uses** from the environment — `API_KEY_ID` + `API_KEY_SECRET`, or `BLAZEMETER_API_KEY` (a path to a JSON key file). Never pass keys on the command line. If it exits with a credentials error, show the user which variables to set and stop.
 - **`--baseline-file`** — pass the user's committed `.blazemeter/baseline.json` when the repo has one; its entries (a flat `{test_id: execution_id}` map) pin those tests' baselines.
 - **`--pins`** — if the user pinned a baseline for specific tests earlier **in this conversation**, write those as a small JSON map `{"<test_id>": "<execution_id>"}` to a scratch file and pass it. Pins outrank the committed file. Omit otherwise.
 - Baseline precedence per test is applied inside the engine: **conversational pin → committed file → last passing run** (from the test's own history, which may legitimately predate the window). A test with no passing run gets `"source": "none"` — no baseline is invented.
@@ -181,9 +178,9 @@ Open the HTML file to see the full branded scorecard (per-test health, SLA-compl
 
 ## Gotchas
 
-- **Never do the bulk pull over MCP.** Chaining `blazemeter_*` list/read calls per test and per execution burns enormous time and tokens at portfolio scale — a quarter across a suite is thousands of payloads — and is exactly what the engine exists for. MCP is for Step 0's interactive picks, the consent gate, and single-run drill-ins afterward — nothing in between.
-- **Census the window, don't walk the catalog.** Step 0 resolves the scope and runs `plan` for the **window census** — no paging `blazemeter_tests list`, and idle tests are never touched. A big census is a reason to *offer narrowing* to a project (or a shorter window), never to silently truncate.
-- **Consent before sweep.** The AI-consent check (Step 0c) must pass before any `plan`/`sweep` invocation — the gate lives in the MCP layer, and the engine assumes it already happened.
+- **Never do the bulk pull over MCP.** Chaining `blazemeter_*` list/read calls per test and per execution burns enormous time and tokens at portfolio scale — a quarter across a suite is thousands of payloads — and is exactly what the engine exists for. MCP is for Step 0's interactive picks, the consent gate, the **window census** (`blazemeter_execution search` — one call, read `total`), and single-run drill-ins afterward — nothing in between.
+- **Census the window, don't walk the catalog.** Step 0 resolves the scope and runs the `blazemeter_execution search` census (one call, read `total`) — no paging `blazemeter_tests list`, and idle tests are never touched. A big census is a reason to *offer narrowing* to a project (or a shorter window), never to silently truncate.
+- **Consent before sweep.** The AI-consent check (Step 0c) must pass before the census search and any `sweep` invocation — the gate lives in the MCP layer, and the engine assumes it already happened.
 - **Credentials are environment-only.** The engine reads `API_KEY_ID`/`API_KEY_SECRET` or `BLAZEMETER_API_KEY` (a key-file path) — the same variables the MCP uses. Never put a key on the command line, in the data model, or in the generated HTML (it's meant to be emailed — keep it secret-free).
 - **Trust the engine's arithmetic.** Deltas, normalization, baseline choice, and status buckets are computed deterministically. Your derivations on top (SLA %, trend arrow, health) are simple mappings of those numbers — if a number looks wrong, say so and show it; don't silently recompute or re-fetch.
 - **Deep windows can hit the history cap.** For each test the engine pages executions newest-first (50 per page, up to 20 pages ≈ 1,000 runs) and stops once a page predates the window. A test that ran more than ~1,000 times since the window started can have its **oldest in-window runs truncated** — a real possibility with quarter-long windows on hyperactive CI tests. If a very active test's `runs_in_window` looks suspiciously flat, say the history may be capped and offer a shorter window for that portfolio.

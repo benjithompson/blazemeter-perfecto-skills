@@ -451,21 +451,6 @@ def test_sweep_exceeding_max_failure_rate_exits_nonzero(tmp_path, capsys):
     assert "exceeds --max-failure-rate" in capsys.readouterr().err
 
 
-def test_plan_window_census_counts_runs_without_reports(tmp_path, capsys):
-    transport = FakeTransport.from_fixture("project_sweep.json")
-    args = argparse.Namespace(account_id=None, workspace_id=None, project_id="101",
-                              concurrency=2, from_="1000000", to="2000000")
-    rc = bzm_fetch.cmd_plan(args, transport)
-    assert rc == 0
-    plan = json.loads(capsys.readouterr().out)
-    assert plan["runs_in_window"] == 3 and plan["tests_ran"] == 2
-    assert plan["per_test"][0]["runs"] == 2  # busiest test first
-    assert plan["per_test"][0]["test_id"] == "202"  # string ids, matching the sweep/pins
-    # Census is ONE windowed /masters listing: no catalog, no reports.
-    assert not any(path == "/tests" for path, _ in transport.calls)
-    assert not any("/reports/" in path for path, _ in transport.calls)
-
-
 def _window_scope():
     return {"account_id": "9", "workspace_id": None, "project_id": None}
 
