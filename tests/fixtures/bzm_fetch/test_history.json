@@ -1,5 +1,5 @@
 {
-  "comment": "Canned v4 responses for one test's run history (test 301, window 1000000-2000000). Newest run 9401 passes clean; 9301 fails with a 26% error rate, one anomaly, and a near-100%-error endpoint; 9201 passes near-identical to 9401; 9101 aborted (partial - no reports fetched); 9051 is noData (inconclusive); 9000 passes but its ALL summary row is all-null (zero hits, e.g. a GUI/EUX run) and ends exactly at the window start (edge: included); 8000 predates the window entirely (excluded). No summary/anomaly routes exist for 9101/9051/8000 on purpose - fetching them is a fixture error.",
+  "comment": "Canned v4 responses for one test's run history (test 301, window 1000000-2000000). Newest run 9401 passes clean; 9301 fails with a 26% error rate, one anomaly, and a near-100%-error endpoint; 9201 passes near-identical to 9401; 9101 aborted (partial - no reports fetched); 9051 is noData (inconclusive); 9000 passes but its ALL summary row is all-null (zero hits, e.g. a GUI/EUX run) and ends exactly at the window start (edge: included); 8000 predates the window entirely (excluded). No summary/anomaly routes exist for 9101/9051/8000 on purpose - fetching them is a fixture error. Timeseries routes (--timeseries): /data/labels + /kpi-values exist only for 9401 (healthy ramp; id/name label naming, `kpis` datapoint container) and 9301 (saturated from the start, minute-5 RT spike + error burst; labelId/labelName naming, `values` container) — fetching curves for any other run is a fixture error.",
   "routes": [
     {
       "path": "/tests/301",
@@ -109,6 +109,64 @@
         "result": [
           { "labelId": "L3", "labelName": "/search", "samples": 500, "errorsCount": 0, "errorsRate": 0, "avgResponseTime": 210, "90line": 390, "95line": 500, "99line": 710 },
           { "labelId": "L4", "labelName": "/home", "samples": 500, "errorsCount": 0, "errorsRate": 0, "avgResponseTime": 118, "90line": 245, "95line": 315, "99line": 470 }
+        ],
+        "error": null
+      }
+    },
+    {
+      "path": "/data/labels",
+      "params": {"master_id": "9401"},
+      "response": { "result": [ { "id": "a3f0", "name": "ALL" }, { "id": "b1c2", "name": "/checkout" } ], "error": null }
+    },
+    {
+      "path": "/data/labels",
+      "params": {"master_id": "9301"},
+      "response": { "result": [ { "labelId": "a3f0", "labelName": "ALL" }, { "labelId": "b1c2", "labelName": "/checkout" } ], "error": null }
+    },
+    {
+      "path": "/masters/9401/kpi-values",
+      "params": {"id": "label/a3f0/t/pec95", "interval": "60"},
+      "response": {
+        "result": [
+          {
+            "labelId": "a3f0", "labelName": "ALL", "kpi": "t", "requestedKpi": "pec95",
+            "kpis": [
+              {"ts": 1700000, "na": 5, "n": 25, "ec": 0, "t_avg": 200, "t_pec50": 180.0, "t_pec95": 380, "t_min": 40, "t_max": 580, "lt_avg": 160.0, "by_avg": 8300},
+              {"ts": 1700060, "na": 10, "n": 50, "ec": 0, "t_avg": 205, "t_pec50": 184.5, "t_pec95": 390, "t_min": 40, "t_max": 590, "lt_avg": 164.0, "by_avg": 8300},
+              {"ts": 1700120, "na": 15, "n": 75, "ec": 0, "t_avg": 210, "t_pec50": 189.0, "t_pec95": 395, "t_min": 40, "t_max": 595, "lt_avg": 168.0, "by_avg": 8300},
+              {"ts": 1700180, "na": 20, "n": 100, "ec": 0, "t_avg": 205, "t_pec50": 184.5, "t_pec95": 400, "t_min": 40, "t_max": 600, "lt_avg": 164.0, "by_avg": 8300},
+              {"ts": 1700240, "na": 20, "n": 100, "ec": 0, "t_avg": 208, "t_pec50": 187.2, "t_pec95": 405, "t_min": 40, "t_max": 605, "lt_avg": 166.4, "by_avg": 8300},
+              {"ts": 1700300, "na": 20, "n": 100, "ec": 0, "t_avg": 210, "t_pec50": 189.0, "t_pec95": 410, "t_min": 40, "t_max": 610, "lt_avg": 168.0, "by_avg": 8300},
+              {"ts": 1700360, "na": 20, "n": 100, "ec": 0, "t_avg": 207, "t_pec50": 186.3, "t_pec95": 415, "t_min": 40, "t_max": 615, "lt_avg": 165.6, "by_avg": 8300},
+              {"ts": 1700420, "na": 20, "n": 100, "ec": 0, "t_avg": 209, "t_pec50": 188.1, "t_pec95": 420, "t_min": 40, "t_max": 620, "lt_avg": 167.2, "by_avg": 8300},
+              {"ts": 1700480, "na": 20, "n": 100, "ec": 0, "t_avg": 210, "t_pec50": 189.0, "t_pec95": 425, "t_min": 40, "t_max": 625, "lt_avg": 168.0, "by_avg": 8300},
+              {"ts": 1700540, "na": 20, "n": 100, "ec": 0, "t_avg": 208, "t_pec50": 187.2, "t_pec95": 430, "t_min": 40, "t_max": 630, "lt_avg": 166.4, "by_avg": 8300}
+            ]
+          }
+        ],
+        "error": null
+      }
+    },
+    {
+      "path": "/masters/9301/kpi-values",
+      "params": {"id": "label/a3f0/t/pec95", "interval": "60"},
+      "response": {
+        "result": [
+          {
+            "labelId": "a3f0", "labelName": "ALL", "kpi": "t", "requestedKpi": "pec95",
+            "values": [
+              {"ts": 1600000, "na": 5, "n": 100, "ec": 0, "t_avg": 230, "t_pec50": 207.0, "t_pec95": 460, "t_min": 40, "t_max": 660, "lt_avg": 184.0, "by_avg": 8300},
+              {"ts": 1600060, "na": 10, "n": 100, "ec": 0, "t_avg": 235, "t_pec50": 211.5, "t_pec95": 470, "t_min": 40, "t_max": 670, "lt_avg": 188.0, "by_avg": 8300},
+              {"ts": 1600120, "na": 15, "n": 100, "ec": 0, "t_avg": 240, "t_pec50": 216.0, "t_pec95": 480, "t_min": 40, "t_max": 680, "lt_avg": 192.0, "by_avg": 8300},
+              {"ts": 1600180, "na": 20, "n": 100, "ec": 0, "t_avg": 238, "t_pec50": 214.2, "t_pec95": 475, "t_min": 40, "t_max": 675, "lt_avg": 190.4, "by_avg": 8300},
+              {"ts": 1600240, "na": 20, "n": 100, "ec": 0, "t_avg": 242, "t_pec50": 217.8, "t_pec95": 485, "t_min": 40, "t_max": 685, "lt_avg": 193.6, "by_avg": 8300},
+              {"ts": 1600300, "na": 20, "n": 100, "ec": 50, "t_avg": 600, "t_pec50": 540.0, "t_pec95": 1200, "t_min": 40, "t_max": 1400, "lt_avg": 480.0, "by_avg": 8300},
+              {"ts": 1600360, "na": 20, "n": 100, "ec": 0, "t_avg": 245, "t_pec50": 220.5, "t_pec95": 490, "t_min": 40, "t_max": 690, "lt_avg": 196.0, "by_avg": 8300},
+              {"ts": 1600420, "na": 20, "n": 100, "ec": 0, "t_avg": 240, "t_pec50": 216.0, "t_pec95": 480, "t_min": 40, "t_max": 680, "lt_avg": 192.0, "by_avg": 8300},
+              {"ts": 1600480, "na": 20, "n": 100, "ec": 0, "t_avg": 238, "t_pec50": 214.2, "t_pec95": 476, "t_min": 40, "t_max": 676, "lt_avg": 190.4, "by_avg": 8300},
+              {"ts": 1600540, "na": 20, "n": 100, "ec": 0, "t_avg": 236, "t_pec50": 212.4, "t_pec95": 472, "t_min": 40, "t_max": 672, "lt_avg": 188.8, "by_avg": 8300}
+            ]
+          }
         ],
         "error": null
       }
