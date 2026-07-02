@@ -170,6 +170,70 @@ def test_anomaly_status_mapping():
     assert bzm_fetch.anomaly_status({"result": {"anomalyCount": 3}}) == "anomalies_with_details"
 
 
+def test_anomaly_items_normalizes_both_live_shapes():
+    # Seen live: `anomalies` is a list when empty, an anomalyId-keyed dict otherwise.
+    row = {"kpi": "avg_rt", "labelName": "ALL"}
+    assert bzm_fetch.anomaly_items({"result": {"anomalies": {"a1": row}}}) == [row]
+    assert bzm_fetch.anomaly_items({"result": {"anomalies": [row]}}) == [row]
+    assert bzm_fetch.anomaly_items({"result": {"anomalies": []}}) == []
+    assert bzm_fetch.anomaly_items({"result": {}}) == []
+    assert bzm_fetch.anomaly_items(None) == []
+
+
+def test_health_for_covers_all_four_states():
+    # unjudged: no KPI verdicts (only inconclusive/partial/running runs) — NEVER healthy.
+    assert bzm_fetch.health_for(0, 0, 0, False) == "unjudged"
+    assert bzm_fetch.health_for(0, 0, 0, True) == "unjudged"
+    # critical: any failing run in the window...
+    assert bzm_fetch.health_for(4, 3, 1, False) == "critical"
+    # ...or SLA compliance (passed/kpi_runs) below 60%.
+    assert bzm_fetch.health_for(10, 5, 0, False) == "critical"
+    # at-risk: regressed while still green, or SLA below 90%.
+    assert bzm_fetch.health_for(3, 3, 0, True) == "at-risk"
+    assert bzm_fetch.health_for(10, 8, 0, False) == "at-risk"
+    # healthy: all green, no regression; SLA exactly 90% is not "below 90%".
+    assert bzm_fetch.health_for(3, 3, 0, False) == "healthy"
+    assert bzm_fetch.health_for(10, 9, 0, False) == "healthy"
+
+
+def test_worst_health_ordering_critical_beats_at_risk_beats_unjudged_beats_healthy():
+    assert bzm_fetch.worst_health(["healthy"]) == "healthy"
+    assert bzm_fetch.worst_health(["healthy", "unjudged"]) == "unjudged"
+    assert bzm_fetch.worst_health(["unjudged", "at-risk", "healthy"]) == "at-risk"
+    assert bzm_fetch.worst_health(["at-risk", "healthy", "critical", "unjudged"]) == "critical"
+    assert bzm_fetch.worst_health([]) == "unjudged"  # nothing judged, never "healthy"
+
+
+def test_worst_incident_ref_ranks_failures_first_then_magnitude():
+    entries = [
+        {"test_id": "1", "incident_candidates": [
+            {"type": "anomaly", "execution_id": "10", "kpi": "p95"},
+            {"type": "regression", "execution_id": "11",
+             "worst_kpi_move": {"kpi": "p95", "pct": 40.0}},
+        ]},
+        {"test_id": "2", "incident_candidates": [{"type": "failure", "execution_id": "20"}]},
+        {"test_id": "3", "incident_candidates": []},
+    ]
+    assert bzm_fetch.worst_incident_ref(entries) == {
+        "type": "failure", "test_id": "2", "execution_id": "20",
+    }
+    # Without a failure, the regression outranks the anomaly.
+    assert bzm_fetch.worst_incident_ref(entries[:1]) == {
+        "type": "regression", "test_id": "1", "execution_id": "11",
+    }
+    assert bzm_fetch.worst_incident_ref([entries[2]]) is None
+    # Within a class, the bigger move wins.
+    regs = [
+        {"test_id": "a", "incident_candidates": [
+            {"type": "regression", "execution_id": "1",
+             "worst_kpi_move": {"kpi": "avg", "pct": 12.0}}]},
+        {"test_id": "b", "incident_candidates": [
+            {"type": "regression", "execution_id": "2",
+             "worst_kpi_move": {"kpi": "p95", "pct": 55.0}}]},
+    ]
+    assert bzm_fetch.worst_incident_ref(regs)["test_id"] == "b"
+
+
 # --- credentials ------------------------------------------------------------------
 
 
@@ -262,6 +326,13 @@ def test_sweep_produces_the_digest(tmp_path, capsys):
         path == "/masters" and params.get("testId") == "202" for path, params in transport.calls
     )
     assert first["failed"] == 1 and first["passed"] == 1
+    # v3: the workspace name comes from ONE cached /workspaces/{id} read.
+    assert first["workspace"] == {"id": 11, "name": "Retail"}
+    assert second["workspace"] == {"id": 11, "name": "Retail"}
+    assert sum(1 for path, _ in transport.calls if path == "/workspaces/11") == 1
+    # v3: per-test health chips — a failing run is critical; regressed-while-green at-risk.
+    assert first["health"] == "critical"
+    assert second["health"] == "at-risk"
     assert first["baseline"] == {"source": "last-passing", "execution_id": "9100"}
     assert first["candidate_execution_id"] == "9101"  # newest FAILING run wins
     assert {"type": "failure", "execution_id": "9101"} in first["incident_candidates"]
@@ -312,11 +383,58 @@ def test_sweep_pin_pointing_at_candidate_yields_nothing_to_compare(tmp_path):
     assert not checkout["regressed"]
 
 
+def test_sweep_rollups_aggregate_workspaces_and_projects(tmp_path):
+    rc, digest, _ = run_project_sweep(tmp_path)
+    assert rc == 0
+
+    [ws] = digest["workspaces"]
+    assert ws["id"] == 11 and ws["name"] == "Retail"
+    assert ws["runs_in_window"] == 3 and ws["tests_ran"] == 2
+    assert ws["passed"] == 2 and ws["failed"] == 1
+    # Both tests regressed vs their own baselines (201 on p95, 202 on error rate).
+    assert ws["regressed"] == 2 and ws["inconclusive"] == 0
+    assert ws["health"] == "critical"  # worst member (202) wins over at-risk (201)
+    assert ws["worst_incident"] == {
+        "type": "failure", "test_id": "202", "execution_id": "9101",
+    }
+
+    [proj] = digest["projects"]
+    assert proj["id"] == 101 and proj["name"] == "Checkout"
+    assert proj["workspace"] == {"id": 11, "name": "Retail"}  # rows carry their workspace
+    assert proj["health"] == "critical"
+    assert proj["worst_incident"] == ws["worst_incident"]
+
+    # Every rollup number sums from the member entries — nothing re-fetched or invented.
+    for key in ("runs_in_window", "passed", "failed", "inconclusive"):
+        assert ws[key] == sum(t[key] for t in digest["tests"])
+        assert proj[key] == sum(t[key] for t in digest["tests"])
+    assert ws["tests_ran"] == len(digest["tests"])
+    assert ws["regressed"] == sum(1 for t in digest["tests"] if t["regressed"])
+
+
+def test_sweep_workspace_name_failure_degrades_to_null_id_still_groups(tmp_path):
+    transport = FakeTransport.from_fixture("project_sweep.json")
+    transport.routes = [r for r in transport.routes if r["path"] != "/workspaces/11"]
+    args = sweep_args(tmp_path)
+    rc = bzm_fetch.cmd_sweep(args, transport)
+    assert rc == 0  # names are cosmetic — degrade, never crash
+    digest = json.loads(Path(args.out).read_text(encoding="utf-8"))
+    assert all(t["workspace"] == {"id": 11, "name": None} for t in digest["tests"])
+    [ws] = digest["workspaces"]
+    assert ws["id"] == 11 and ws["name"] is None  # the id still groups
+    assert digest["coverage"]["http_failed"] == 1
+    assert any(
+        f["stage"] == "workspace" and f["item"] == "workspace:11"
+        for f in digest["coverage"]["failures"]
+    )
+
+
 def test_sweep_empty_window_reports_idle_not_fabricated(tmp_path):
     rc, digest, _ = run_project_sweep(tmp_path, from_="3000000", to="4000000")
     assert rc == 0
     assert digest["tests_ran"] == 0 and digest["runs_in_window"] == 0
     assert digest["tests"] == []
+    assert digest["workspaces"] == [] and digest["projects"] == []  # nothing invented
 
 
 def test_sweep_exceeding_max_failure_rate_exits_nonzero(tmp_path, capsys):
