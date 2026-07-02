@@ -66,7 +66,7 @@ list rows carry `testId`/`projectId`/`maxUsers` — so `sweep` and `plan` are no
 (whole-account 24h ≈ one request), grouped by `testId`; baselines and reports are
 fetched only for **active** tests. Cost scales with activity, not catalog size
 (SE Demo: 166 workspaces / 6,339 tests → seconds instead of minutes). The digest schema
-(v2) drops `tests_in_scope`/`idle_tests` — unknowable without a catalog walk — in favor
+(v2; since advanced to v3 — workspace names, per-test health, workspace/project rollups) drops `tests_in_scope`/`idle_tests` — unknowable without a catalog walk — in favor
 of `runs_in_window`; `plan` is now a window census (runs/tests active), which is the
 sweep's true cost driver and the right practicality guard.
 

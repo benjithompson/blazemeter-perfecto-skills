@@ -158,8 +158,8 @@ before operating on the next.
 ### 4.7 Cross-test variant — resolve to a *scope*, then enumerate the tests within it
 
 §4.1–4.6 resolve **down to a single test**. That is the right shape for **single-test skills** —
-`analyze` / `run` / `compare` / `triage` operate on one test (or one execution of it), so they use
-§4 exactly as written.
+`test-analysis` / `run-test` / `triage-failure` operate on one test (or one execution of it), so
+they use §4 exactly as written.
 
 Some skills instead operate over **many tests at once** — e.g. `daily-digest` and `portfolio-report`,
 which summarize or roll up every test in a workspace or project. These use this **cross-test

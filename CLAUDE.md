@@ -1,76 +1,66 @@
 # BlazeMeter & Perfecto Skills
 
-A shared repository of Claude Code **skills and commands** that help users get more value from
-Perforce's testing platforms through their MCP servers:
-
-- **BlazeMeter MCP** — performance / load testing, plus **Virtual Services** and
-  **API Test & Monitoring**
-- **Perfecto MCP** — mobile / web device testing and execution
-
-The goal is a polished, well-documented set of skills and commands that other users can install
-and use to drive these platforms from Claude Code.
+Claude Code **skills and commands** for driving Perforce's testing platforms through their MCP
+servers: **BlazeMeter MCP** (performance/load testing, plus Virtual Services and API Test &
+Monitoring) and **Perfecto MCP** (mobile/web device testing). Goal: a polished, well-documented
+skill set other users can install and drive from Claude Code.
 
 > Domain language and architectural decisions are captured lazily in `CONTEXT.md` and
-> `docs/adr/` as they get resolved (via the engineering skills). Don't pre-populate them.
+> `docs/adr/` as they get resolved. Don't pre-populate them.
 
 ## Repository is a Claude Code plugin
 
-This repo is itself a Claude Code plugin (`.claude-plugin/plugin.json`). **During active
-development it loads directly from a local git checkout** as a skills-directory plugin
-(`perforce@skills-dir`) — symlink the repo into `~/.claude/skills/` and Claude Code
-discovers it in place, with no marketplace install and no version pin (see the README "Install"
-section). Marketplace distribution (`.claude-plugin/marketplace.json`) is **deferred** until the
-plugin is built out further; the manifest is kept ready for that. Layout:
+The repo is itself the plugin (`.claude-plugin/plugin.json`). During active development it loads
+**directly from a local git checkout** as a skills-directory plugin (`perforce@skills-dir`) —
+symlink the repo into `~/.claude/skills/`; no marketplace install, no version pin (see README
+"Install"). Marketplace distribution is **deferred**; `.claude-plugin/marketplace.json` is kept
+ready. Layout:
 
 - `skills/<name>/SKILL.md` — the skills (auto-discovered; invoked as `perforce:<name>`).
-- `shared/conventions.md` — **the skill-authoring house style and Definition of Done. Read it
-  before adding or changing a skill.** It defines the required Context Resolution step, frontmatter
-  rules, credential handling, and MCP-first integration.
-- `shared/scripts/` — deterministic shared scripts (e.g. the frontmatter linter), referenced from
-  skills via `${CLAUDE_PLUGIN_ROOT}`.
+- `shared/conventions.md` — **house style + Definition of Done. Read it before adding or changing
+  a skill.** Defines the Context Resolution step, frontmatter rules, credential handling, and
+  MCP-first integration.
+- `shared/scripts/` — deterministic shared scripts, referenced from skills via
+  `${CLAUDE_PLUGIN_ROOT}`.
+- `shared/assets/` — shared static assets (the branded report template), filled in-skill.
 - `tests/` — fixture-driven tests for the deterministic layer; run with `pytest`.
 - `commands/` — optional thin command entry points to skills.
-- `.mcp.json` — bundles the BlazeMeter MCP server (launched via `uvx`) so enabling the plugin
-  auto-connects it; ships only env-var placeholders (`${BLAZEMETER_API_KEY}`), never secrets. A
-  manually-configured BlazeMeter MCP is deduped by endpoint (higher scope wins). Perfecto is not
-  bundled yet (no Perfecto skills). See ADR-0015.
+- `.mcp.json` — bundles the BlazeMeter MCP server (via `uvx`) so enabling the plugin
+  auto-connects it; ships only env-var placeholders (`${BLAZEMETER_API_KEY}`), never secrets.
+  Deduped by endpoint against a manually-configured server (higher scope wins). Perfecto is not
+  bundled yet. See ADR-0015.
 
-CI (`.github/workflows/ci.yml`) lints every `SKILL.md` frontmatter, smoke-tests shared scripts'
-`--help`, and runs the tests.
+CI (`.github/workflows/ci.yml`): frontmatter lint, user-facing-surface lint (no contributor-doc
+references in skills/commands), script `--help` smoke, tests.
 
 ## Making changes take effect
 
-With the **direct-from-git (skills-dir)** setup, the plugin is read **in place** from your checkout,
-so there is no version pin and no reinstall. Updating is just:
+Skills-dir load reads the checkout in place: `git -C ~/.claude/skills/perforce pull`, then
+`/reload-plugins` (or a new session). `SKILL.md` edits are live immediately; other components
+(`.mcp.json`, `shared/`, `hooks/`, …) need the reload. `/reload-plugins` is interactive — an
+agent that lands a plugin change must end by telling the user to run it. Bump the plugin
+`version` only when preparing a marketplace release (marketplace installs are version-pinned;
+irrelevant to the skills-dir dev loop).
 
-```bash
-git -C ~/.claude/skills/perforce pull
-```
+## Workflow: PRD → issues → PRs — and keep them current
 
-Then `/reload-plugins` (or a new session). Edits to a `SKILL.md` take effect immediately; changes
-to other components (`.mcp.json`, `hooks/`, `agents/`, …) need the reload. `/reload-plugins` is an
-interactive Claude Code command — when an agent lands a plugin change in a session, end by telling
-the user to run it (the agent has no tool to invoke it).
-
-> **Versioning only matters for the deferred marketplace path.** A *marketplace* install is
-> version-pinned (it copies the plugin into a cache and only updates when the plugin `version`
-> increases, with `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` carrying the
-> same value). That bites only if/when we publish via the marketplace — it's irrelevant to the
-> skills-dir dev loop above. Bump the version when preparing a marketplace release, not for every
-> edit.
+- **New work starts as a PRD issue**, split into small, independently-grabbable child issues,
+  each with acceptance criteria and "blocked by" edges. That granularity is what makes AI-agent
+  work effective — agents pick up `ready-for-agent` issues, not prose plans.
+- **Landing a PR includes its paper trail.** In the same change, update every doc that states the
+  old behavior (README, CONTRIBUTING, `shared/conventions.md`, `CONTEXT.md`) and add
+  status/amendment notes to superseded ADRs.
+- **Close what shipped.** Close an issue when its work lands, with a comment mapping spec →
+  shipped form where they diverged; when a parent PRD closes, verify its delivered children are
+  closed too.
+- Stale docs and open-but-shipped issues mislead the next agent — treat them as bugs and sweep
+  them periodically.
 
 ## Agent skills
 
-### Issue tracker
-
-Issues and PRDs live in this repo's GitHub Issues (via the `gh` CLI). External PRs are not a
-triage surface. See `docs/agents/issue-tracker.md`.
-
-### Triage labels
-
-Five canonical triage labels, used as-is: `needs-triage`, `needs-info`, `ready-for-agent`,
-`ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
-
-### Domain docs
-
-Single-context: one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+- **Issue tracker** — issues and PRDs live in this repo's GitHub Issues (via the `gh` CLI).
+  External PRs are not a triage surface. See `docs/agents/issue-tracker.md`.
+- **Triage labels** — five canonical labels, used as-is: `needs-triage`, `needs-info`,
+  `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+- **Domain docs** — single-context: one `CONTEXT.md` + `docs/adr/` at the repo root. See
+  `docs/agents/domain.md`.
