@@ -1,0 +1,143 @@
+{
+  "comment": "Canned v4 responses for the line-protocol export: project 101 (workspace 11, account 9) with five in-window runs. 9001 (pass) and 9101 (fail) export cleanly with 3- and 2-bucket curves; 9102's summary answers with the archived-report error envelope; 9104's summary is a zero-hit ALL row (no load KPIs); 9103 is still running. Shapes mirror shared/scripts/API_NOTES.md.",
+  "routes": [
+    {
+      "path": "/projects/101",
+      "response": {
+        "result": { "id": 101, "name": "Checkout", "workspaceId": 11 },
+        "error": null
+      }
+    },
+    {
+      "path": "/workspaces/11",
+      "response": {
+        "result": { "id": 11, "name": "Retail", "accountId": 9, "enabled": true },
+        "error": null
+      }
+    },
+    {
+      "path": "/tests/201",
+      "response": {
+        "result": { "id": 201, "name": "checkout-flow", "projectId": 101 },
+        "error": null
+      }
+    },
+    {
+      "path": "/tests/202",
+      "response": {
+        "result": { "id": 202, "name": "search-api (canonical)", "projectId": 101 },
+        "error": null
+      }
+    },
+    {
+      "path": "/masters",
+      "params": { "projectId": "101", "skip": "0" },
+      "response": {
+        "result": [
+          { "id": 9103, "testId": 202, "projectId": 101, "name": "search-api", "created": 1650000, "updated": 1650300, "ended": null, "reportStatus": null, "maxUsers": 10 },
+          { "id": 9104, "testId": 202, "projectId": 101, "name": "search-api", "created": 1610000, "updated": 1613600, "ended": 1613600, "reportStatus": "pass", "maxUsers": 10 },
+          { "id": 9101, "testId": 202, "projectId": 101, "name": "search-api", "created": 1600000, "updated": 1603600, "ended": 1603600, "reportStatus": "fail", "maxUsers": 10 },
+          { "id": 9102, "testId": 202, "projectId": 101, "name": "search-api", "created": 1540000, "updated": 1543600, "ended": 1543600, "reportStatus": "pass", "maxUsers": 10 },
+          { "id": 9001, "testId": 201, "projectId": 101, "name": "checkout-flow", "created": 1500000, "updated": 1503600, "ended": 1503600, "reportStatus": "pass", "maxUsers": 20 }
+        ],
+        "skip": 0, "limit": 50, "error": null
+      }
+    },
+    {
+      "path": "/masters/9001/reports/default/summary",
+      "response": {
+        "result": {
+          "summary": [
+            { "id": "ALL", "lb": "ALL", "hits": 7200, "failed": 0, "avg": 200, "tp90": 430, "tp95": 480, "tp99": 700, "hits_avg": 16.9, "maxUsers": 20, "duration": 3600 }
+          ]
+        },
+        "error": null
+      }
+    },
+    {
+      "path": "/masters/9101/reports/default/summary",
+      "response": {
+        "result": {
+          "summary": [
+            { "id": "ALL", "lb": "ALL", "hits": 1000, "failed": 280, "avg": 900, "tp90": 1600, "tp95": 2100, "tp99": 3000, "hits_avg": 8.4, "maxUsers": 10, "duration": 1200 }
+          ]
+        },
+        "error": null
+      }
+    },
+    {
+      "path": "/masters/9102/reports/default/summary",
+      "response": {
+        "result": null,
+        "error": { "code": 422, "message": "Execution report is archived. It is not possible to read execution information from an archived execution." }
+      }
+    },
+    {
+      "path": "/masters/9104/reports/default/summary",
+      "response": {
+        "result": {
+          "summary": [
+            { "id": "ALL", "lb": "ALL", "hits": null, "failed": null, "avg": null, "tp90": null, "tp95": null, "tp99": null, "hits_avg": null, "maxUsers": null, "duration": 0 }
+          ]
+        },
+        "error": null
+      }
+    },
+    {
+      "path": "/data/labels",
+      "params": { "master_id": "9001" },
+      "response": {
+        "result": [
+          { "id": "a3f0", "name": "ALL" },
+          { "id": "b111", "name": "/checkout" }
+        ],
+        "error": null
+      }
+    },
+    {
+      "path": "/masters/9001/kpi-values",
+      "params": { "id": "label/a3f0/t/pec95", "interval": "60" },
+      "response": {
+        "result": [
+          {
+            "labelId": "a3f0",
+            "labelName": "ALL",
+            "kpis": [
+              { "ts": 1500000, "na": 10, "n": 60, "ec": 0, "t_avg": 100, "t_pec95": 200 },
+              { "ts": 1500060 },
+              { "ts": 1500120, "na": 20, "n": 120, "ec": 6, "t_avg": 150, "t_pec95": 300 }
+            ]
+          }
+        ],
+        "error": null
+      }
+    },
+    {
+      "path": "/data/labels",
+      "params": { "master_id": "9101" },
+      "response": {
+        "result": [
+          { "id": "a3f0", "name": "ALL" }
+        ],
+        "error": null
+      }
+    },
+    {
+      "path": "/masters/9101/kpi-values",
+      "params": { "id": "label/a3f0/t/pec95", "interval": "60" },
+      "response": {
+        "result": [
+          {
+            "labelId": "a3f0",
+            "labelName": "ALL",
+            "kpis": [
+              { "ts": 1600000, "na": 10, "n": 120, "ec": 12, "t_avg": 800, "t_pec95": 1900 },
+              { "ts": 1600060, "na": 10, "n": 120, "ec": 60, "t_avg": 1000, "t_pec95": 2400 }
+            ]
+          }
+        ],
+        "error": null
+      }
+    }
+  ]
+}

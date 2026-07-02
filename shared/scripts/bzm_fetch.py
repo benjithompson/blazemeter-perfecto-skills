@@ -33,6 +33,17 @@ BlazeMeter MCP's account-wide `blazemeter_execution search` — v1.3.0):
          anomaly status per run, incident candidates -> write the history JSON
          (size O(runs-kept), oldest-first) to --out. Stdout is a five-line summary.
 
+  export  Window/sync export of a scope's ENDED runs as InfluxDB line protocol:
+         the same window-first /masters listing -> per ended run fetch summary
+         KPIs (and, unless --no-timeseries, the intra-run ALL-label curves at
+         interval=60 — no --curve-runs cap; completeness is the point) -> emit
+         `bzm_run` (one line per run, ts = run end) and `bzm_run_point` (one
+         line per minute bucket, ts = bucket time) and push them via
+         shared/scripts/bzm_influx.py (lazy-imported), or write a .lp file with
+         --dry-run --out. --sync exports since the newest `bzm_run` timestamp
+         already in Influx minus --lookback. Tags are immutable ids only; all
+         names are fields, so renames never split a series.
+
   Intra-run timeseries (--timeseries, on history and run-pair): additionally pull
          each selected run's within-run KPI curves — the minute-by-minute data
          behind the platform's live execution charts — via the ALL label's
@@ -65,6 +76,8 @@ Usage:
         --baseline-file .blazemeter/baseline.json --out digest.json
     python bzm_fetch.py history --test-id 15725552 \
         --from 2026-06-01T00:00:00Z --to 2026-07-01T00:00:00Z --out history.json
+    python bzm_fetch.py export --workspace-id 2194183 --dry-run --out runs.lp
+    python bzm_fetch.py export --workspace-id 2194183 --sync --lookback 86400
 """
 
 from __future__ import annotations
@@ -122,6 +135,17 @@ RAMP_PEAK_FRACTION = 0.95  # "at peak" = within 5% of the run's max active users
 RT_SPIKE_FACTOR = 2.0  # a bucket's avg RT >= 2x the run median counts as a spike
 ERROR_BURST_MIN_PCT = 5.0  # an error burst must cross 5% in its bucket...
 ERROR_BURST_FACTOR = 2.0  # ...and be at least 2x the run's overall error rate
+
+# Line-protocol export (the `export` subcommand). Default window = last 7 days;
+# --sync scans from (Influx watermark - lookback, default 24h) so a late-arriving
+# run is still picked up — overlap is free, Influx upserts are idempotent. Fields
+# in LP_INTEGER_FIELDS carry the `i` suffix; every other numeric field is a float,
+# pinned per key so a series' schema never flips type between exports.
+EXPORT_RUN_MEASUREMENT = "bzm_run"
+EXPORT_POINT_MEASUREMENT = "bzm_run_point"
+DEFAULT_EXPORT_WINDOW_S = 7 * 24 * 3600
+DEFAULT_SYNC_LOOKBACK_S = 24 * 3600
+LP_INTEGER_FIELDS = frozenset({"hits", "max_users", "users"})
 
 # Incident-candidate severity for the rollups' `worst_incident` ref: outright
 # failures, then regressions vs baseline, then error spikes, then anomalies —
@@ -670,6 +694,150 @@ def build_timeseries(points: list[dict], interval_s: int = TIMESERIES_INTERVAL_S
     }
 
 
+# --- line-protocol export (pure helpers; the `export` subcommand) ------------------
+
+
+def is_archived_report(payload: dict | None) -> bool:
+    """True when a report response carries BlazeMeter's archived-report error.
+
+    Older execution reports get archived; the API then answers with an explicit
+    "Execution report is archived..." error instead of data. Archived runs are a
+    data condition, not a fetch failure — callers count them distinctly so a
+    trend/export never mislabels them "no KPIs".
+    """
+    if not payload:
+        return False
+    error = payload.get("error")
+    message = error.get("message") if isinstance(error, dict) else error
+    return bool(message) and "archived" in str(message).lower()
+
+
+def _http_error_is_archived(exc: urllib.error.HTTPError) -> bool:
+    """True when a 4xx body carries the archived-report error message.
+
+    Matches the specific phrase, not the bare word - an unrelated error that
+    merely mentions "archived" must stay a fetch failure, not a data condition.
+    """
+    try:
+        body = exc.read().decode("utf-8", "replace")
+    except (OSError, ValueError):
+        return False
+    return "report is archived" in body.lower()
+
+
+def _lp_escape_tag(value) -> str:
+    """Escape a measurement/tag/field-key token per the line-protocol spec."""
+    return str(value).replace(",", "\\,").replace("=", "\\=").replace(" ", "\\ ")
+
+
+def _lp_field(key, value) -> str | None:
+    """One `key=value` field pair, its type pinned by key (see LP_INTEGER_FIELDS).
+
+    Strings are quoted with `"`/`\\` escaped; integer fields carry the `i`
+    suffix; everything else numeric is a float (rounded to 6 places so float
+    noise never lands in the database). A non-finite float (NaN/Infinity can
+    arrive verbatim from a JSON body) is invalid line protocol - omitted.
+    """
+    if isinstance(value, str):
+        quoted = '"%s"' % value.replace("\\", "\\\\").replace('"', '\\"')
+        return "%s=%s" % (_lp_escape_tag(key), quoted)
+    if key in LP_INTEGER_FIELDS:
+        return "%s=%di" % (_lp_escape_tag(key), int(value))
+    number = float(value)
+    if not math.isfinite(number):
+        return None
+    return "%s=%s" % (_lp_escape_tag(key), repr(round(number, 6)))
+
+
+def lp_line(measurement: str, tags: dict, fields: dict, ts: int) -> str | None:
+    """One line-protocol line at precision=s, or None when no field has a value.
+
+    Tags and fields are emitted sorted by key (deterministic output; Influx
+    also indexes faster on sorted tags). None-valued tags AND fields are
+    OMITTED — a null is never written as a fabricated 0 — and a line with no
+    surviving field is dropped entirely (the protocol requires at least one).
+    """
+    tag_str = "".join(
+        ",%s=%s" % (_lp_escape_tag(k), _lp_escape_tag(v))
+        for k, v in sorted(tags.items())
+        if v is not None
+    )
+    field_parts = [
+        part
+        for k, v in sorted(fields.items())
+        if v is not None
+        if (part := _lp_field(k, v)) is not None
+    ]
+    if not field_parts:
+        return None
+    return "%s%s %s %d" % (
+        _lp_escape_tag(measurement).replace("\\=", "="),  # measurements keep literal '='
+        tag_str,
+        ",".join(field_parts),
+        ts,
+    )
+
+
+def export_run_line(tags: dict, names: dict, kpis: dict, ended_ts: int) -> str | None:
+    """The `bzm_run` line for one ended run, stamped with the run's END time.
+
+    Tags are immutable ids only; every (mutable) display name rides along as a
+    field so a rename can never split the series — dashboards resolve display
+    names via last(name).
+    """
+    fields = {
+        "test_name": names.get("test_name"),
+        "project_name": names.get("project_name"),
+        "workspace_name": names.get("workspace_name"),
+        "execution_name": names.get("execution_name"),
+        "avg_ms": kpis.get("avg_ms"),
+        "p90_ms": kpis.get("p90_ms"),
+        "p95_ms": kpis.get("p95_ms"),
+        "p99_ms": kpis.get("p99_ms"),
+        "throughput_rps": kpis.get("throughput_rps"),
+        "error_rate_pct": kpis.get("error_rate_pct"),
+        "max_users": kpis.get("max_users"),
+        "hits": kpis.get("hits"),
+        "duration_s": kpis.get("duration_s"),
+    }
+    return lp_line(EXPORT_RUN_MEASUREMENT, tags, fields, ended_ts)
+
+
+def export_point_lines(
+    tags: dict, points: list[dict], interval_s: int = TIMESERIES_INTERVAL_S
+) -> list[str]:
+    """The `bzm_run_point` lines for one run's minute buckets, ts = bucket time.
+
+    Reuses `downsample_curve` at stride 1 (max_points = the full bucket count)
+    so the unit/merge rules stay identical to the analysis curves — but at full
+    minute resolution, since a database (unlike a JSON the model ingests) has no
+    size ceiling. Null curve entries are omitted fields, never 0; an all-null
+    bucket yields no line at all.
+    """
+    if not points:
+        return []
+    curve = downsample_curve(points, interval_s, max_points=len(points))
+    t0 = points[0]["ts"]
+    lines = []
+    for i, offset in enumerate(curve["offset_s"]):
+        # At stride 1 curve[i] maps to points[i]. A bucket with no sample count
+        # is a collection gap: hits/error rate would come back as fabricated 0s
+        # from the phase arithmetic - null them so a gap never charts as an
+        # outage (an all-null bucket then emits no line at all).
+        has_samples = points[i].get("n") is not None
+        fields = {
+            "users": curve["users"][i],
+            "hits_per_s": curve["hits_per_s"][i] if has_samples else None,
+            "error_rate_pct": curve["error_rate_pct"][i] if has_samples else None,
+            "avg_ms": curve["avg_ms"][i],
+            "p95_ms": curve["p95_ms"][i],
+        }
+        line = lp_line(EXPORT_POINT_MEASUREMENT, tags, fields, t0 + offset)
+        if line:
+            lines.append(line)
+    return lines
+
+
 def health_for(kpi_runs: int, passed: int, failed: int, regressed: bool) -> str:
     """Deterministic health chip for one test's window (schema v3).
 
@@ -812,24 +980,28 @@ class Sweeper:
         cache[project_id] = context
         return context
 
-    def workspace_name(self, workspace_id, cache: dict) -> str | None:
-        """Workspace name from /workspaces/{id}, cached per workspace id.
+    def workspace_info(self, workspace_id, cache: dict) -> dict:
+        """{name, account_id} from /workspaces/{id}, cached per workspace id.
 
         One request per DISTINCT active workspace (cost scales with activity,
-        never the account's workspace catalog). A failed read degrades to a
-        null name via coverage — the name is cosmetic, the id still groups.
+        never the account's workspace catalog). A failed read degrades to null
+        values via coverage — the name is cosmetic, the id still groups.
         """
         if workspace_id in cache:
             return cache[workspace_id]
         try:
             workspace = self.t.get("/workspaces/%s" % workspace_id).get("result") or {}
             self.cov.ok()
-            name = workspace.get("name")
+            info = {"name": workspace.get("name"), "account_id": workspace.get("accountId")}
         except Exception as exc:  # noqa: BLE001 - name is cosmetic, id still groups
             self.cov.fail("workspace", "workspace:%s" % workspace_id, exc)
-            name = None
-        cache[workspace_id] = name
-        return name
+            info = {"name": None, "account_id": None}
+        cache[workspace_id] = info
+        return info
+
+    def workspace_name(self, workspace_id, cache: dict) -> str | None:
+        """Workspace name from `workspace_info` (same cache, same degradation)."""
+        return self.workspace_info(workspace_id, cache)["name"]
 
     def test_name(self, test_id, cache: dict, fallback: str | None) -> str | None:
         """Canonical test name from /tests/{id}, cached; falls back to the run label.
@@ -905,14 +1077,14 @@ class Sweeper:
         # fabricated 0% error rate.
         return kpis if kpis["hits"] else None
 
-    def fetch_timeseries(self, master_id) -> dict | None:
-        """One run's intra-run timeseries block, or None (degrades, never fails).
+    def fetch_series_points(self, master_id) -> list[dict] | None:
+        """One run's raw ALL-label minute datapoints, or None (degrades, never fails).
 
         Two GETs per run: /data/labels to find the aggregate ALL label, then ONE
         /kpi-values series for it at interval=60 — each datapoint carries the
         full KPI field set (users, hits, errors, avg, percentiles), so one
         request covers every curve. A missing ALL label, empty series, or HTTP
-        failure returns None; callers surface it as `timeseries_unavailable`.
+        failure returns None.
         """
         try:
             labels = self.t.get("/data/labels", {"master_id": master_id})
@@ -932,7 +1104,46 @@ class Sweeper:
         except Exception as exc:  # noqa: BLE001 - curves degrade, never fail the pull
             self.cov.fail("timeseries", "master:%s" % master_id, exc)
             return None
-        return build_timeseries(series_points(series))
+        return series_points(series) or None
+
+    def fetch_timeseries(self, master_id) -> dict | None:
+        """One run's intra-run timeseries block, or None (degrades, never fails).
+
+        The compact analysis view over `fetch_series_points`: downsampled curve
+        plus shape summary. Callers surface a None as `timeseries_unavailable`.
+        """
+        points = self.fetch_series_points(master_id)
+        return build_timeseries(points) if points else None
+
+    def fetch_export_summary(self, master_id) -> tuple[dict | None, str]:
+        """(kpis, outcome) for one exported run: ok | archived | no_kpis | failed.
+
+        The export's honesty contract: an ARCHIVED report (BlazeMeter's explicit
+        error for older runs — arrives either as an error envelope or a 4xx
+        body) is a data condition counted distinctly, never a fetch failure and
+        never folded into "no KPIs"; `no_kpis` is a readable report with no
+        load-KPI ALL row (GUI/EUX runs); only a genuine fetch failure lands in
+        coverage's failure rate.
+        """
+        try:
+            report = self.t.get("/masters/%s/reports/default/summary" % master_id)
+            self.cov.ok()
+        except urllib.error.HTTPError as exc:
+            if _http_error_is_archived(exc):
+                self.cov.ok()
+                return None, "archived"
+            self.cov.fail("summary", "master:%s" % master_id, exc)
+            return None, "failed"
+        except Exception as exc:  # noqa: BLE001 - degrades into coverage
+            self.cov.fail("summary", "master:%s" % master_id, exc)
+            return None, "failed"
+        if is_archived_report(report):
+            return None, "archived"
+        row = summary_all_row(report)
+        if not row:
+            return None, "no_kpis"
+        kpis = summary_kpis(row)
+        return (kpis, "ok") if kpis["hits"] else (None, "no_kpis")
 
     def fetch_optional(self, path: str, stage: str, master_id) -> dict | None:
         """Errors/aggregate/anomalies: absence degrades the digest, never fails it."""
@@ -1744,14 +1955,207 @@ def cmd_history(args, transport) -> int:
     return 0
 
 
+def _export_tag_filters(scope: dict) -> dict[str, str]:
+    """The scope's one CLI-given id as Influx tag filters (watermark scoping)."""
+    return {k: str(v) for k, v in scope.items() if v is not None}
+
+
+def cmd_export(args, transport) -> int:
+    """Window/sync export of a scope's ended runs -> line protocol -> Influx/--out."""
+    if args.sync and (args.from_ or args.to):
+        print("error: --sync and --from/--to are mutually exclusive", file=sys.stderr)
+        return 2
+    if args.dry_run and args.sync:
+        print(
+            "error: --sync needs Influx access to read the watermark, but --dry-run "
+            "skips all Influx interaction — use an explicit --from/--to window",
+            file=sys.stderr,
+        )
+        return 2
+    if args.dry_run and not args.out:
+        print("error: --dry-run needs --out (the .lp file to write)", file=sys.stderr)
+        return 2
+
+    scope = _scope_from_args(args)
+    influx = None
+    if not args.dry_run:
+        # Lazy import: the dry-run path (and --help) must work without the module.
+        try:
+            import bzm_influx as influx  # noqa: PLC0415 - deliberate lazy import
+        except ImportError:
+            print(
+                "error: pushing to InfluxDB needs shared/scripts/bzm_influx.py on the "
+                "import path — or use --dry-run --out to write a .lp file instead",
+                file=sys.stderr,
+            )
+            return 2
+
+    if args.out and not args.dry_run:
+        print("note: --out is only written with --dry-run; pushing to InfluxDB instead", file=sys.stderr)
+
+    now = int(time.time())
+    if args.sync:
+        try:
+            watermark = influx.query_watermark(
+                measurement=EXPORT_RUN_MEASUREMENT, tag_filters=_export_tag_filters(scope)
+            )
+        except Exception as exc:  # a failed watermark read must never masquerade as "no data"
+            print("error: watermark query failed: %s" % exc, file=sys.stderr)
+            return 3
+        to_ts = now
+        # No watermark = a fresh bucket: fall back to the default window, never a
+        # full-history walk without an explicit --from.
+        from_ts = (
+            watermark - args.lookback if watermark is not None else now - DEFAULT_EXPORT_WINDOW_S
+        )
+        if from_ts >= to_ts:
+            print(
+                "error: sync window is empty (watermark - lookback is not before now) - "
+                "check for clock skew or raise --lookback",
+                file=sys.stderr,
+            )
+            return 2
+    else:
+        to_ts = parse_when(args.to) if args.to else now
+        from_ts = parse_when(args.from_) if args.from_ else to_ts - DEFAULT_EXPORT_WINDOW_S
+        if from_ts >= to_ts:
+            print("error: --from must be earlier than --to", file=sys.stderr)
+            return 2
+
+    cov = Coverage()
+    sweeper = Sweeper(transport, cov, concurrency=args.concurrency)
+
+    # Ended runs only: a still-running run has no final KPIs or end timestamp to
+    # stamp; it is counted (never exported) and the next sync's watermark overlap
+    # picks it up once it ends. Rows without a testId cannot be tagged - dropped.
+    masters = [
+        m for m in sweeper.masters_in_window(scope, from_ts, to_ts) if m.get("testId") is not None
+    ]
+    ended = sorted(
+        (m for m in masters if m.get("ended")),
+        key=lambda m: (m.get("ended") or 0, str(m.get("id"))),
+    )
+    still_running = len(masters) - len(ended)
+
+    context_cache: dict = {}
+    workspace_cache: dict = {}
+    name_cache: dict = {}
+    counts = {"archived": 0, "no_kpis": 0, "failed": 0}
+    counts_lock = threading.Lock()
+
+    def process(m) -> dict:
+        run_id = str(m.get("id"))
+        kpis, outcome = sweeper.fetch_export_summary(run_id)
+        if outcome != "ok":
+            with counts_lock:
+                counts[outcome] += 1
+            return {"run_line": None, "point_lines": [], "curve": None}
+
+        project_id = m.get("projectId")
+        context = sweeper.project_context(project_id, context_cache, workspace_cache)
+        workspace = context.get("workspace") or {}
+        ws_info = (
+            sweeper.workspace_info(workspace["id"], workspace_cache)
+            if workspace.get("id") is not None
+            else {"name": None, "account_id": None}
+        )
+        test_id = str(m.get("testId"))
+        # Tags = immutable ids only (a rename must never split a series); the
+        # CLI-given scope id wins over a resolved one, resolution gaps degrade
+        # to an omitted tag via coverage.
+        tags = {
+            "account_id": scope["account_id"] or ws_info["account_id"],
+            "workspace_id": scope["workspace_id"] or workspace.get("id"),
+            "project_id": project_id,
+            "test_id": test_id,
+            "execution_id": run_id,
+            "status": str(m.get("reportStatus") or "unset"),
+        }
+        names = {
+            "test_name": sweeper.test_name(test_id, name_cache, m.get("name")),
+            "project_name": context["project"].get("name"),
+            "workspace_name": workspace.get("name"),
+            "execution_name": m.get("name"),
+        }
+        run_line = export_run_line(tags, names, kpis, m["ended"])
+        point_lines: list[str] = []
+        curve = None
+        if not args.no_timeseries:
+            points = sweeper.fetch_series_points(run_id)
+            curve = points is not None
+            if points:
+                point_lines = export_point_lines(tags, points)
+        return {"run_line": run_line, "point_lines": point_lines, "curve": curve}
+
+    results = list(sweeper.pool.map(process, ended))
+    run_lines = [r["run_line"] for r in results if r["run_line"]]
+    point_lines = [line for r in results for line in r["point_lines"]]
+    curves_selected = sum(1 for r in results if r["curve"] is not None)
+    curves_ok = sum(1 for r in results if r["curve"])
+
+    print(
+        "export: %d ended runs in window [%d, %d) (%d still running skipped) -> %d exported"
+        % (len(ended), from_ts, to_ts, still_running, len(run_lines))
+    )
+    print(
+        "lines: %d bzm_run + %d bzm_run_point (curves for %d/%d runs)"
+        % (len(run_lines), len(point_lines), curves_ok, curves_selected)
+    )
+    print(
+        "skipped: %d archived | %d no KPIs | %d fetch failed"
+        % (counts["archived"], counts["no_kpis"], counts["failed"])
+    )
+    print(
+        "coverage: %d/%d fetches ok (%d failed)"
+        % (cov.attempted - cov.failed, cov.attempted, cov.failed)
+    )
+
+    failed_batches = 0
+    if args.dry_run:
+        out = Path(args.out)
+        out.write_text("".join(line + "\n" for line in run_lines + point_lines), encoding="utf-8")
+        print("wrote %s" % out)
+    else:
+        writer = influx.InfluxWriter(bucket=args.bucket, points_bucket=args.points_bucket)
+        attempted = written = retries = 0
+        for lines, bucket in ((run_lines, None), (point_lines, args.points_bucket)):
+            if not lines:
+                continue
+            stats = writer.write(lines, bucket=bucket)
+            attempted += stats.attempted_lines
+            written += stats.written_lines
+            failed_batches += stats.failed_batches
+            retries += stats.retries
+        print(
+            "pushed %d/%d lines to InfluxDB (%d failed batches, %d retries)"
+            % (written, attempted, failed_batches, retries)
+        )
+
+    if cov.rate() > args.max_failure_rate:
+        print(
+            "error: fetch failure rate %.0f%% exceeds --max-failure-rate %.0f%% — "
+            "export ran but is incomplete" % (100 * cov.rate(), 100 * args.max_failure_rate),
+            file=sys.stderr,
+        )
+        return 3
+    if failed_batches:
+        print(
+            "error: %d Influx write batch(es) failed — re-run to fill the gap "
+            "(writes are idempotent)" % failed_batches,
+            file=sys.stderr,
+        )
+        return 3
+    return 0
+
+
 # --- CLI ------------------------------------------------------------------------
 
 
-def _add_scope_args(parser: argparse.ArgumentParser) -> None:
+def _add_scope_args(parser: argparse.ArgumentParser, verb: str = "sweep") -> None:
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--account-id", help="sweep the whole account")
-    group.add_argument("--workspace-id", help="sweep one workspace")
-    group.add_argument("--project-id", help="sweep one project")
+    group.add_argument("--account-id", help="%s the whole account" % verb)
+    group.add_argument("--workspace-id", help="%s one workspace" % verb)
+    group.add_argument("--project-id", help="%s one project" % verb)
     parser.add_argument("--concurrency", type=int, default=8, help="parallel fetches (default 8)")
 
 
@@ -1773,8 +2177,9 @@ def _add_window_args(parser: argparse.ArgumentParser, out_help: str) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Deterministic bulk-fetch engine for BlazeMeter sweeps "
-        "(windowed cross-test digest, run history, run pairs). Credentials come "
-        "from API_KEY_ID/API_KEY_SECRET or BLAZEMETER_API_KEY (key-file path).",
+        "(windowed cross-test digest, run history, run pairs, line-protocol "
+        "export). Credentials come from API_KEY_ID/API_KEY_SECRET or "
+        "BLAZEMETER_API_KEY (key-file path).",
     )
     sub = parser.add_subparsers(dest="command")
 
@@ -1823,6 +2228,55 @@ def main(argv: list[str] | None = None) -> int:
     )
     _add_window_args(p_history, out_help="path for the history JSON")
     p_history.set_defaults(func=cmd_history)
+
+    p_export = sub.add_parser(
+        "export",
+        help="Export a scope's ended runs (+ intra-run curves) as InfluxDB line "
+        "protocol: push via bzm_influx, or --dry-run --out for a .lp file.",
+    )
+    _add_scope_args(p_export, verb="export")
+    p_export.add_argument(
+        "--from",
+        dest="from_",
+        help="window start (ISO-8601 or epoch; default: 7 days before --to)",
+    )
+    p_export.add_argument("--to", help="window end (ISO-8601 or epoch; default: now)")
+    p_export.add_argument(
+        "--sync",
+        action="store_true",
+        help="export since the newest bzm_run timestamp already in Influx minus "
+        "--lookback (mutually exclusive with --from/--to)",
+    )
+    p_export.add_argument(
+        "--lookback",
+        type=int,
+        default=DEFAULT_SYNC_LOOKBACK_S,
+        help="seconds re-scanned behind the --sync watermark (default %d = 24h; "
+        "overlap is free, writes are idempotent)" % DEFAULT_SYNC_LOOKBACK_S,
+    )
+    p_export.add_argument(
+        "--no-timeseries",
+        action="store_true",
+        help="skip the per-run intra-run curves (bzm_run_point lines)",
+    )
+    p_export.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="write the line protocol to --out instead of pushing to InfluxDB",
+    )
+    p_export.add_argument("--out", help="path for the .lp file (required with --dry-run)")
+    p_export.add_argument("--bucket", help="Influx bucket override (else INFLUX_BUCKET)")
+    p_export.add_argument(
+        "--points-bucket",
+        help="separate bucket for bzm_run_point lines (shorter-retention split)",
+    )
+    p_export.add_argument(
+        "--max-failure-rate",
+        type=float,
+        default=0.2,
+        help="exit non-zero when this fraction of fetches failed (default 0.2)",
+    )
+    p_export.set_defaults(func=cmd_export)
 
     args = parser.parse_args(argv)
     if not getattr(args, "command", None):

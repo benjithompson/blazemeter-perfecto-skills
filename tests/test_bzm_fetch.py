@@ -13,6 +13,8 @@ import argparse
 import io
 import json
 import os
+import sys
+import types
 import urllib.error
 import urllib.parse
 from pathlib import Path
@@ -982,6 +984,326 @@ def test_run_pair_timeseries_missing_labels_degrades_to_notes(tmp_path):
     assert "candidate_timeseries_unavailable" in compare["notes"]
     # The KPI compare itself is untouched.
     assert compare["kpi_deltas"]["p95"]["adverse"]
+
+
+# --- line-protocol export (export) ----------------------------------------------------
+
+
+def export_args(tmp_path, **overrides) -> argparse.Namespace:
+    defaults = dict(
+        account_id=None,
+        workspace_id=None,
+        project_id="101",
+        from_="1000000",
+        to="2000000",
+        sync=False,
+        lookback=bzm_fetch.DEFAULT_SYNC_LOOKBACK_S,
+        no_timeseries=False,
+        dry_run=True,
+        out=str(tmp_path / "export.lp"),
+        bucket=None,
+        points_bucket=None,
+        concurrency=2,
+        max_failure_rate=0.2,
+    )
+    defaults.update(overrides)
+    return argparse.Namespace(**defaults)
+
+
+def run_export(tmp_path, transport=None, **overrides):
+    transport = transport or FakeTransport.from_fixture("project_export.json")
+    args = export_args(tmp_path, **overrides)
+    rc = bzm_fetch.cmd_export(args, transport)
+    out = Path(args.out) if args.out else None
+    lines = out.read_text(encoding="utf-8").splitlines() if out and out.exists() else None
+    return rc, lines, transport
+
+
+class StubInflux:
+    """A stand-in for shared/scripts/bzm_influx.py honoring the fixed contract."""
+
+    def __init__(self, watermark=None, failed_batches=0):
+        self.watermark = watermark
+        self.failed_batches = failed_batches
+        self.watermark_calls: list[dict] = []
+        self.writes: list[dict] = []
+        self.writer_init: dict | None = None
+        stub = self
+
+        class Writer:
+            def __init__(self, bucket=None, points_bucket=None):
+                stub.writer_init = {"bucket": bucket, "points_bucket": points_bucket}
+
+            def write(self, lines, *, bucket=None):
+                lines = list(lines)
+                stub.writes.append({"lines": lines, "bucket": bucket})
+                return types.SimpleNamespace(
+                    attempted_lines=len(lines),
+                    written_lines=len(lines) if not stub.failed_batches else 0,
+                    failed_batches=stub.failed_batches,
+                    retries=0,
+                )
+
+        self.InfluxWriter = Writer
+
+    def query_watermark(self, *, measurement, tag_filters):
+        self.watermark_calls.append({"measurement": measurement, "tag_filters": tag_filters})
+        return self.watermark
+
+
+EXPORT_RUN_TAGS_9001 = (
+    "account_id=9,execution_id=9001,project_id=101,status=pass,test_id=201,workspace_id=11"
+)
+EXPORT_RUN_TAGS_9101 = (
+    "account_id=9,execution_id=9101,project_id=101,status=fail,test_id=202,workspace_id=11"
+)
+GOLDEN_EXPORT_LINES = [
+    "bzm_run,%s avg_ms=200.0,duration_s=3600.0,error_rate_pct=0.0,"
+    'execution_name="checkout-flow",hits=7200i,max_users=20i,p90_ms=430.0,p95_ms=480.0,'
+    'p99_ms=700.0,project_name="Checkout",test_name="checkout-flow",throughput_rps=16.9,'
+    'workspace_name="Retail" 1503600' % EXPORT_RUN_TAGS_9001,
+    "bzm_run,%s avg_ms=900.0,duration_s=1200.0,error_rate_pct=28.0,"
+    'execution_name="search-api",hits=1000i,max_users=10i,p90_ms=1600.0,p95_ms=2100.0,'
+    'p99_ms=3000.0,project_name="Checkout",test_name="search-api (canonical)",'
+    'throughput_rps=8.4,workspace_name="Retail" 1603600' % EXPORT_RUN_TAGS_9101,
+    "bzm_run_point,%s avg_ms=100.0,error_rate_pct=0.0,hits_per_s=1.0,p95_ms=200.0,"
+    "users=10i 1500000" % EXPORT_RUN_TAGS_9001,
+    # The fixture's 1500060 bucket is {"ts": ...} only - a collection gap. It must
+    # emit NO line (a fabricated hits_per_s=0.0 would chart as an outage).
+    "bzm_run_point,%s avg_ms=150.0,error_rate_pct=5.0,hits_per_s=2.0,p95_ms=300.0,"
+    "users=20i 1500120" % EXPORT_RUN_TAGS_9001,
+    "bzm_run_point,%s avg_ms=800.0,error_rate_pct=10.0,hits_per_s=2.0,p95_ms=1900.0,"
+    "users=10i 1600000" % EXPORT_RUN_TAGS_9101,
+    "bzm_run_point,%s avg_ms=1000.0,error_rate_pct=50.0,hits_per_s=2.0,p95_ms=2400.0,"
+    "users=10i 1600060" % EXPORT_RUN_TAGS_9101,
+]
+
+
+def test_export_point_lines_gap_bucket_emits_no_line():
+    # A datapoint with only a timestamp is a collection gap: no fabricated 0s.
+    points = [
+        {"ts": 1500000, "n": 60, "na": 10, "t_avg": 100.0, "t_pec95": 200.0},
+        {"ts": 1500060},
+        {"ts": 1500120, "n": 120, "na": 20, "t_avg": 150.0, "t_pec95": 300.0},
+    ]
+    lines = bzm_fetch.export_point_lines({"execution_id": "1"}, points)
+    assert len(lines) == 2
+    assert not any(" 1500060" in line for line in lines)
+    assert not any("hits_per_s=0.0" in line for line in lines)
+
+
+def test_lp_field_omits_non_finite_floats():
+    line = bzm_fetch.lp_line("m", {"t": "1"}, {"ok": 1.5, "bad": float("nan"), "worse": float("inf")}, 10)
+    assert line == "m,t=1 ok=1.5 10"
+    assert bzm_fetch.lp_line("m", {"t": "1"}, {"bad": float("nan")}, 10) is None
+
+
+def test_http_error_is_archived_requires_the_specific_phrase():
+    def http_error(body: bytes) -> urllib.error.HTTPError:
+        return urllib.error.HTTPError("u", 422, "Unprocessable", {}, io.BytesIO(body))
+
+    assert bzm_fetch._http_error_is_archived(
+        http_error(b'{"error": {"message": "Execution report is archived."}}')
+    )
+    assert not bzm_fetch._http_error_is_archived(
+        http_error(b'{"error": {"message": "Workspace was archived by an admin"}}')
+    )
+
+
+def test_lp_line_escapes_sorts_and_types_fields():
+    line = bzm_fetch.lp_line(
+        "bzm_run",
+        {"b tag": "has space", "a": "x,y=z", "skipped": None},
+        {"name": 'He said "hi" \\ bye', "users": 3, "rt": 1.5, "omitted": None},
+        42,
+    )
+    # Tags sorted and escaped; string fields quoted with "/\ escaped; ints carry
+    # the i suffix; None tags AND fields omitted, never a fabricated 0.
+    assert line == (
+        "bzm_run,a=x\\,y\\=z,b\\ tag=has\\ space "
+        'name="He said \\"hi\\" \\\\ bye",rt=1.5,users=3i 42'
+    )
+    # A line with no surviving field is dropped (the protocol requires one).
+    assert bzm_fetch.lp_line("m", {"a": "1"}, {"x": None}, 1) is None
+
+
+def test_export_point_lines_empty_series_yields_nothing():
+    assert bzm_fetch.export_point_lines({"test_id": "1"}, []) == []
+
+
+def test_is_archived_report_matches_the_error_envelope():
+    archived = {
+        "result": None,
+        "error": {"code": 422, "message": "Execution report is archived. It is not..."},
+    }
+    assert bzm_fetch.is_archived_report(archived)
+    assert not bzm_fetch.is_archived_report({"result": {}, "error": None})
+    assert not bzm_fetch.is_archived_report(None)
+    assert not bzm_fetch.is_archived_report(
+        {"result": None, "error": {"code": 404, "message": "Not found"}}
+    )
+
+
+def test_fetch_export_summary_classifies_archived_http_error():
+    # The archived error can also arrive as a 4xx whose body carries the message.
+    body = json.dumps(
+        {"error": {"code": 422, "message": "Execution report is archived."}}
+    ).encode()
+
+    class ArchivedTransport:
+        def get(self, path, params=None):
+            raise urllib.error.HTTPError(path, 422, "unprocessable", {}, io.BytesIO(body))
+
+    cov = bzm_fetch.Coverage()
+    sweeper = bzm_fetch.Sweeper(ArchivedTransport(), cov, concurrency=1)
+    assert sweeper.fetch_export_summary(1) == (None, "archived")
+    assert cov.failed == 0  # a data condition, never a fetch failure
+
+
+def test_fetch_export_summary_outcomes_no_kpis_and_failed():
+    transport = FakeTransport([
+        {"path": "/masters/1/reports/default/summary",
+         "response": {"result": {"summary": [{"id": "ALL", "lb": "ALL", "hits": None}]}}},
+    ])
+    cov = bzm_fetch.Coverage()
+    sweeper = bzm_fetch.Sweeper(transport, cov, concurrency=1)
+    assert sweeper.fetch_export_summary(1) == (None, "no_kpis")
+    assert sweeper.fetch_export_summary(2) == (None, "failed")  # no route -> raises
+    assert cov.failed == 1 and cov.failures[0]["stage"] == "summary"
+
+
+def test_export_dry_run_emits_golden_line_protocol(tmp_path, capsys):
+    rc, lines, transport = run_export(tmp_path)
+    assert rc == 0
+    assert lines == GOLDEN_EXPORT_LINES
+
+    # Ended runs only: the still-running 9103 is never drilled into.
+    assert not any("9103" in path for path, _ in transport.calls)
+    # No curve pulls for archived (9102) / no-KPI (9104) runs.
+    label_pulls = sorted(q["master_id"] for p, q in transport.calls if p == "/data/labels")
+    assert label_pulls == ["9001", "9101"]
+
+    out = capsys.readouterr().out
+    assert out.count("\n") == 5  # five-line human summary
+    assert "export: 4 ended runs in window [1000000, 2000000) (1 still running skipped) -> 2 exported" in out
+    assert "lines: 2 bzm_run + 4 bzm_run_point (curves for 2/2 runs)" in out
+    assert "skipped: 1 archived | 1 no KPIs | 0 fetch failed" in out
+    assert "wrote" in out
+
+
+def test_export_no_timeseries_skips_all_curve_pulls(tmp_path, capsys):
+    rc, lines, transport = run_export(tmp_path, no_timeseries=True)
+    assert rc == 0
+    assert lines == GOLDEN_EXPORT_LINES[:2]  # bzm_run lines only
+    assert not any(p == "/data/labels" or p.endswith("/kpi-values") for p, _ in transport.calls)
+    assert "lines: 2 bzm_run + 0 bzm_run_point (curves for 0/0 runs)" in capsys.readouterr().out
+
+
+def test_export_default_window_is_the_last_seven_days(tmp_path):
+    rc, lines, transport = run_export(tmp_path, from_=None, to=None)
+    assert rc == 0
+    assert lines == []  # the fixture's 1970s runs fall outside a now-anchored window
+    [(path, params)] = [(p, q) for p, q in transport.calls if p == "/masters"]
+    assert int(params["endTime"]) - int(params["startTime"]) == bzm_fetch.DEFAULT_EXPORT_WINDOW_S
+
+
+def test_export_sync_mode_scans_from_watermark_minus_lookback(tmp_path, monkeypatch, capsys):
+    stub = StubInflux(watermark=1503600)
+    monkeypatch.setitem(sys.modules, "bzm_influx", stub)
+    rc, _, transport = run_export(
+        tmp_path, dry_run=False, out=None, sync=True, from_=None, to=None,
+        lookback=3600, bucket="bzm", points_bucket="bzm-points",
+    )
+    assert rc == 0
+
+    # since = watermark - lookback, scoped by the same tag filters.
+    assert stub.watermark_calls == [
+        {"measurement": "bzm_run", "tag_filters": {"project_id": "101"}}
+    ]
+    masters_params = next(q for p, q in transport.calls if p == "/masters")
+    assert masters_params["startTime"] == "1500000"
+
+    # Push: run lines to the default bucket, point lines to --points-bucket.
+    assert stub.writer_init == {"bucket": "bzm", "points_bucket": "bzm-points"}
+    assert [w["bucket"] for w in stub.writes] == [None, "bzm-points"]
+    assert [len(w["lines"]) for w in stub.writes] == [2, 4]
+    assert all(l.startswith("bzm_run,") for l in stub.writes[0]["lines"])
+    assert all(l.startswith("bzm_run_point,") for l in stub.writes[1]["lines"])
+    assert "pushed 6/6 lines to InfluxDB (0 failed batches, 0 retries)" in capsys.readouterr().out
+
+
+def test_export_sync_without_watermark_falls_back_to_default_window(tmp_path, monkeypatch):
+    stub = StubInflux(watermark=None)
+    monkeypatch.setitem(sys.modules, "bzm_influx", stub)
+    rc, _, transport = run_export(
+        tmp_path, dry_run=False, out=None, sync=True, from_=None, to=None
+    )
+    assert rc == 0
+    params = next(q for p, q in transport.calls if p == "/masters")
+    assert int(params["endTime"]) - int(params["startTime"]) == bzm_fetch.DEFAULT_EXPORT_WINDOW_S
+    assert stub.writes == []  # nothing in a now-anchored window -> nothing pushed
+
+
+def test_export_failed_influx_batches_exit_nonzero(tmp_path, monkeypatch, capsys):
+    stub = StubInflux(failed_batches=1)
+    monkeypatch.setitem(sys.modules, "bzm_influx", stub)
+    rc, _, _ = run_export(tmp_path, dry_run=False, out=None)
+    assert rc == 3
+    assert "write batch(es) failed" in capsys.readouterr().err
+
+
+def test_export_usage_guards(tmp_path, capsys, monkeypatch):
+    transport = FakeTransport([])
+    # --sync is watermark-driven: mutually exclusive with an explicit window.
+    assert bzm_fetch.cmd_export(export_args(tmp_path, sync=True), transport) == 2
+    assert "mutually exclusive" in capsys.readouterr().err
+    # --dry-run skips all Influx interaction, so sync mode needs --from/--to.
+    assert bzm_fetch.cmd_export(
+        export_args(tmp_path, sync=True, from_=None, to=None), transport
+    ) == 2
+    assert "--dry-run" in capsys.readouterr().err
+    # --dry-run without a destination file.
+    assert bzm_fetch.cmd_export(export_args(tmp_path, out=None), transport) == 2
+    assert "--out" in capsys.readouterr().err
+    # Inverted window.
+    assert bzm_fetch.cmd_export(
+        export_args(tmp_path, from_="2000000", to="1000000"), transport
+    ) == 2
+    assert "--from must be earlier" in capsys.readouterr().err
+    # Push mode without the bzm_influx module: a clear error, not a traceback.
+    monkeypatch.setitem(sys.modules, "bzm_influx", None)
+    assert bzm_fetch.cmd_export(export_args(tmp_path, dry_run=False), transport) == 2
+    assert "bzm_influx" in capsys.readouterr().err
+    assert transport.calls == []  # every guard fires before any fetch
+
+
+def test_export_summary_fetch_failure_degrades_and_gates_on_rate(tmp_path, capsys):
+    transport = FakeTransport.from_fixture("project_export.json")
+    transport.routes = [
+        r for r in transport.routes if r["path"] != "/masters/9101/reports/default/summary"
+    ]
+    rc, lines, _ = run_export(tmp_path, transport=transport)
+    assert rc == 0  # 1 failure in 10 fetches stays under the default 20%
+    assert [l for l in lines if l.startswith("bzm_run,")] == GOLDEN_EXPORT_LINES[:1]
+    assert "skipped: 1 archived | 1 no KPIs | 1 fetch failed" in capsys.readouterr().out
+
+    transport = FakeTransport.from_fixture("project_export.json")
+    transport.routes = [
+        r for r in transport.routes if r["path"] != "/masters/9101/reports/default/summary"
+    ]
+    rc, _, _ = run_export(tmp_path, transport=transport, max_failure_rate=0.05)
+    assert rc == 3
+    assert "exceeds --max-failure-rate" in capsys.readouterr().err
+
+
+def test_export_curve_pull_failure_counts_but_run_line_survives(tmp_path, capsys):
+    transport = FakeTransport.from_fixture("project_export.json")
+    transport.routes = [r for r in transport.routes if r["path"] != "/masters/9101/kpi-values"]
+    rc, lines, _ = run_export(tmp_path, transport=transport)
+    assert rc == 0  # curves degrade, never fail the export
+    assert [l for l in lines if l.startswith("bzm_run,")] == GOLDEN_EXPORT_LINES[:2]
+    assert [l for l in lines if l.startswith("bzm_run_point,")] == GOLDEN_EXPORT_LINES[2:4]
+    assert "curves for 1/2 runs" in capsys.readouterr().out
 
 
 # --- live drift tripwire (auto-skips without credentials) ----------------------------
