@@ -1,0 +1,61 @@
+{
+  "kind": "digest",
+  "meta": {
+    "title": "Storefront — Daily Digest",
+    "subtitle": "5 runs across 2 tests · last 24h",
+    "generated_at": "2026-07-01T09:00:00Z",
+    "window_start": "2026-06-30T09:00:00Z",
+    "window_end": "2026-07-01T09:00:00Z",
+    "context": {
+      "scope": "Project Storefront",
+      "account": { "name": "Acme", "id": "10001" },
+      "workspace": { "name": "Web", "id": "21" },
+      "project": { "name": "Storefront", "id": "301" },
+      "tests_count": 2
+    }
+  },
+  "summary": {
+    "verdict": "STABLE",
+    "headline": "Everything that ran overnight passed; nothing moved against baseline.",
+    "narrative": [
+      "Both storefront tests stayed green and inside their usual envelope."
+    ]
+  },
+  "tiles": {
+    "pass_rate_pct": 100,
+    "failing_runs": 0,
+    "regressed_tests": 0,
+    "runs_in_window": 5,
+    "tests_ran": 2,
+    "incidents": 0,
+    "top_incident_severity": "none",
+    "unjudged_runs": 0
+  },
+  "workspaces": [],
+  "projects": [
+    {
+      "id": 301, "name": "Storefront", "workspace": { "id": 21, "name": "Web" },
+      "runs_in_window": 5, "tests_ran": 2, "passed": 5, "failed": 0,
+      "regressed": 0, "inconclusive": 0, "health": "healthy"
+    }
+  ],
+  "tests": [
+    {
+      "name": "storefront-browse", "id": "t-7001", "project_id": 301, "health": "healthy",
+      "runs": 3, "passed": 3, "failed": 0, "baseline_source": "last-passing"
+    },
+    {
+      "name": "storefront-buy", "id": "t-7002", "project_id": 301, "health": "healthy",
+      "runs": 2, "passed": 2, "failed": 0, "baseline_source": "committed file"
+    }
+  ],
+  "incidents": [],
+  "coverage": {
+    "http_attempted": 12,
+    "http_failed": 0,
+    "failures": [],
+    "skipped_partial_runs": 0,
+    "inconclusive_runs": 0,
+    "anomalies_unavailable": 0
+  }
+}

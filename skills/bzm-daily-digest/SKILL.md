@@ -1,11 +1,11 @@
 ---
 name: bzm-daily-digest
-description: Sweep every BlazeMeter test that ran across an account (or a chosen workspace/project) in a time window (default last 24h) and produce ONE cross-test scorecard — per-test pass/fail, regression vs each test's own baseline, ranked incidents, and a prioritized "what needs your eyes today" list. Use when asked for a daily/standup digest, a morning rollup, an overnight summary, or a "what broke since yesterday?" view across many tests at once.
+description: Sweep every BlazeMeter test that ran across an account (or a chosen workspace/project) in a time window (default last 24h) and produce ONE cross-test scorecard — per-test pass/fail, regression vs each test's own baseline, ranked incidents, and a prioritized "what needs your eyes today" list, plus a branded, self-contained executive HTML rollup written to ./bzm-reports/. Use when asked for a daily/standup digest, a morning rollup, an overnight summary, or a "what broke since yesterday?" view across many tests at once.
 ---
 
-Produce the **daily digest**: one cross-test scorecard for a whole account — or a chosen workspace/project — over a window. Where `bzm-analyze-test` trends *one* test deeply and `bzm-triage-failure` diagnoses *one* run, this skill sweeps **every test that ran** in the window, judges each against **its own baseline** (not just absolute pass/fail), and rolls the whole portfolio up into a scoreboard, a ranked incident list, and a short "needs your eyes today" list. It is markdown/terminal-first — a scannable standup artifact, **not** a branded HTML report (reach for `bzm-report` when you want the shareable HTML).
+Produce the **daily digest**: one cross-test scorecard for a whole account — or a chosen workspace/project — over a window. Where `bzm-analyze-test` trends *one* test deeply and `bzm-triage-failure` diagnoses *one* run, this skill sweeps **every test that ran** in the window, judges each against **its own baseline** (not just absolute pass/fail), and rolls the whole portfolio up into a scoreboard, a ranked incident list, and a short "needs your eyes today" list. It is markdown-first — the scannable standup artifact lands in the chat — and it **always also writes a branded, self-contained executive HTML rollup** to `./bzm-reports/` (skipped only when nothing ran). The digest is the **execution-results** view — what ran and what broke, rolled up per workspace/project, for daily ops. Its sibling `bzm-portfolio-report` is the account **activity/usage** view — the quarterly, stakeholder-facing scorecard.
 
-**Division of labor (important):** the MCP is used for the *control plane* — resolving the account/scope interactively, the AI-consent gate, and any after-digest drill-in on a single run. The *bulk data pull* (every test's executions, every run's reports) is **never** done by chaining MCP calls — at real account sizes that is thousands of payloads. It is handed off to the deterministic engine at `${CLAUDE_PLUGIN_ROOT}/shared/scripts/bzm_fetch.py`, which sweeps the BlazeMeter API directly, does all the arithmetic (window filtering, baseline resolution, KPI deltas, normalization), and returns one compact pre-aggregated JSON. You read only that JSON and write the narrative.
+**Division of labor (important):** the MCP is used for the *control plane* — resolving the account/scope interactively, the AI-consent gate, and any after-digest drill-in on a single run. The *bulk data pull* (every test's executions, every run's reports) is **never** done by chaining MCP calls — at real account sizes that is thousands of payloads. It is handed off to the deterministic engine at `${CLAUDE_PLUGIN_ROOT}/shared/scripts/bzm_fetch.py`, which sweeps the BlazeMeter API directly, does all the arithmetic (window filtering, baseline resolution, KPI deltas, normalization), and returns one compact pre-aggregated JSON. You read only that JSON, write the narrative, and fill the shipped HTML template — the render is a token replacement plus a file write, no local interpreter.
 
 ## Step 0 — Resolve the account, ask the user the rollup scope, then census the tests
 
@@ -89,7 +89,7 @@ python ${CLAUDE_PLUGIN_ROOT}/shared/scripts/bzm_fetch.py sweep \
 
 ## Step 3 — Read the digest JSON and judge severity
 
-Read `--out`. It is compact — one entry per test that ran (`runs_in_window` and `tests_ran` at the top level; idle tests are never fetched at all). Everything numeric is already computed; **do not recompute or second-guess the arithmetic**. Per test you get:
+Read `--out`. It is compact — one entry per test that ran (`runs_in_window` and `tests_ran` at the top level; idle tests are never fetched at all). Alongside the per-test entries it carries deterministic **`workspaces[]` and `projects[]` rollups** — per node: id, name, `runs_in_window`, `tests_ran`, `passed`/`failed`, `regressed` (count), `inconclusive`, a computed `health` chip (`critical | at-risk | unjudged | healthy`, worst-member-wins), and a `worst_incident` ref — plus a per-test `health` on each entry. These feed the HTML rollup tree in Step 6; copy them through, never recompute them. Everything numeric is already computed; **do not recompute or second-guess the arithmetic**. Per test you get:
 
 - run counts: `runs_in_window`, `kpi_runs`, `passed` / `failed`, `skipped_partial` (aborted/errored runs whose KPIs were deliberately not folded in), `inconclusive`, `still_running`;
 - `baseline` (`source`: `pin | file | last-passing | none`, and the execution id), `candidate_execution_id` (the newest failing run if any failed, else the newest run);
@@ -107,10 +107,78 @@ Treat `statistics_unavailable` as **insufficient data, not a finding** (never an
 
 ## Step 4 — Handle the edge cases gracefully
 
-- **Empty window (nothing ran):** `tests_ran: 0` → **do not** fabricate a scoreboard. Emit the short empty-window form: confirm the scope and window, state plainly that **nothing ran in this window**, and stop. An empty digest is a valid, useful answer.
+- **Empty window (nothing ran):** `tests_ran: 0` → **do not** fabricate a scoreboard, and **skip the HTML entirely** (Steps 5–6 do not run). Emit the short empty-window form: confirm the scope and window, state plainly that **nothing ran in this window**, and stop. An empty digest is a valid, useful answer — the markdown empty form is the whole answer.
 - **Partial coverage:** surface the `coverage` block honestly — skipped partial runs, failed fetches (with counts), anomaly stats unavailable. Never present a partial sweep as complete.
 - **No baseline for a test:** its regression column reads "no baseline"; judge it on absolute pass/fail only.
 - **Drill-ins stay interactive:** when the user asks about one incident ("what happened in run 9101?"), that is a *single-run* question — answer it with the MCP (`blazemeter_execution read`, `read_all_reports`, `read_anomalies_stats` for **that** execution id, or hand off to `bzm-triage-failure`). Don't re-run the sweep for it.
+
+## Step 5 — Build the digest data model (JSON) for the executive HTML
+
+After presenting the markdown digest (the Output template below), **always** also produce the executive HTML — same numbers, same judgment, in a shareable branded form. First build a single JSON object with **`kind: "digest"`**. **Everything numeric copies from the sweep JSON** (values verbatim, or trivial sums of engine-computed fields exactly as mapped below) — the AI never re-derives, re-fetches, or re-judges a number. Your authored contribution is **only** the `summary` block, and it stays **numbers-free**. **Supply `generated_at` yourself** (current time, ISO 8601) — the template never reads the clock. Put **no credentials** anywhere in the model.
+
+```json
+{
+  "kind": "digest",
+  "meta": {
+    "title": "<scope name> — Daily Digest",
+    "subtitle": "<N> runs across <M> tests · <window label>",
+    "generated_at": "<ISO 8601 now>",
+    "window_start": "<ISO date>", "window_end": "<ISO date>",
+    "context": {
+      "scope": "Whole account | Workspace <name> | Project <name>",
+      "account":   { "name": "<account name>", "id": "<account_id>" },
+      "workspace": { "name": "<…>", "id": "<…>" },
+      "project":   { "name": "<…>", "id": "<…>" },
+      "tests_count": 0
+    }
+  },
+  "summary": {
+    "verdict": "STABLE | AT-RISK | REGRESSED | CRITICAL",
+    "headline": "<one-line takeaway>",
+    "narrative": ["<1-2 short paragraphs of expert assessment — no numbers>"]
+  },
+  "tiles": {
+    "pass_rate_pct": 0, "failing_runs": 0, "regressed_tests": 0,
+    "runs_in_window": 0, "tests_ran": 0,
+    "incidents": 0, "top_incident_severity": "critical | warning | info | none",
+    "unjudged_runs": 0
+  },
+  "workspaces": [],
+  "projects": [],
+  "tests": [
+    { "name": "<test name>", "id": "<test_id>", "project_id": "<project id>",
+      "health": "critical | at-risk | unjudged | healthy",
+      "runs": 0, "passed": 0, "failed": 0, "regressed": false,
+      "worst_kpi_move": "<e.g. p95 +34%>",
+      "baseline_source": "pinned | committed file | last-passing | no baseline", "note": "<…>" }
+  ],
+  "incidents": [
+    { "severity": "critical | warning | info", "test": "<test name>", "run_id": "<execution_id>",
+      "kpi": "<metric>", "detail": "<baseline-vs-now numbers / why>" }
+  ],
+  "coverage": {}
+}
+```
+
+Sourcing, field by field:
+
+- **`meta.context`** — the Step 0e block: `scope` as a plain string, plus refs for the levels the scope resolved (account always; workspace/project only when the scope has them); `tests_count` = top-level `tests_ran`.
+- **`summary`** — the **only** AI-authored block. Verdict default rule: **worst health wins, and any outright failure is CRITICAL**; you may downgrade (e.g. a known flaky test) only with the reason stated in the narrative. Keep every number out of it — the tiles and tree carry the numbers.
+- **`tiles`** — six executive values, each a copy or a trivial sum of engine fields: `pass_rate_pct` = total `passed` ÷ (total `passed` + total `failed`) × 100 across the per-test entries, one decimal (`null` when there are no judged runs — renders as `—`); `failing_runs` = sum of entries' `failed`; `regressed_tests` = count of entries with `regressed: true`; `runs_in_window` and `tests_ran` = the top-level fields verbatim; `incidents` = the number of rows in your `incidents[]` with `top_incident_severity` the highest severity among them (`none` when empty); `unjudged_runs` = `coverage.skipped_partial_runs` + `coverage.inconclusive_runs`.
+- **`workspaces[]` / `projects[]`** — the sweep's rollup arrays **copied through verbatim** (id, name, counts, `health`, `worst_incident`). A project-scoped sweep may legitimately have an empty `workspaces[]` — copy it empty; the template then starts the tree at the project level.
+- **`tests[]`** — one row per sweep entry: `name`/`id` from `test_name`/`test_id`; `project_id` from the entry's `project.id` (this is what nests the row under its project); `health`, `passed`, `failed`, `regressed` verbatim; `runs` = `runs_in_window`; `worst_kpi_move` formatted as a short string (`p95 +34%`, or `error rate +2.1 pts` when the delta carries `points`), omitted when null; `baseline_source` display-mapped (`pin → pinned`, `file → committed file`, `last-passing → last-passing`, `none → no baseline`); `note` an optional short honest phrase from the entry's `notes` (e.g. "baseline run, no prior to compare").
+- **`incidents[]`** — your Step 3 severity ranking, flattened: `severity` (`critical | warning | info`), `test`, `run_id`, `kpi`, `detail` with the engine's baseline-vs-now numbers. Empty array when there are none.
+- **`coverage`** — the sweep's `coverage` block **copied verbatim**.
+
+## Step 6 — Emit the executive HTML (template fill, no interpreter)
+
+The digest HTML is the **same shipped template** the other BlazeMeter report skills use, rendering itself from the data model in the browser — there is **no Python step and no local interpreter**. `kind: "digest"` selects the digest section group: the scope header, the six-tile executive KPI band, the verdict block, the collapsible **workspace → project → test** tree (the workspace level appears only when `workspaces[]` is non-empty — i.e. an account-scope digest) with a **problems-only toggle** (defaults ON when any failure or regression exists) and click-to-sort columns, the flat ranked incident list, and the always-rendered coverage/honesty footer. Produce the file with three deterministic actions:
+
+1. **Read the template** at `${CLAUDE_PLUGIN_ROOT}/skills/bzm-report/assets/report-template.html`.
+2. **Serialize the Step 5 model to JSON** and **replace the single token `{{REPORT_DATA_JSON}}`** with it. The token sits inside `<script>window.REPORT_DATA = {{REPORT_DATA_JSON}};</script>`, so before substituting, **escape every `</` in the JSON to `<\/`** — that guarantees a string value (e.g. a test name like `cart </checkout>`) can never close the `<script>` tag early. Substitute the token literally; do not otherwise reformat the template.
+3. **Write the result** to `./bzm-reports/<scope-slug>-<generated_at>.html` (slug the scope name; timestamp from `meta.generated_at`) using the `Write` tool — no shell, no `python`. Then **announce the path** to the user.
+
+The output is fully self-contained (offline, no CDN — safe to email). **Skip this step entirely on an empty window** (`tests_ran: 0`) — the markdown empty form is the whole answer.
 
 ## Output template
 
@@ -142,6 +210,8 @@ Treat `statistics_unavailable` as **insufficient data, not a finding** (never an
 - Tests with no baseline: <N> — judged on absolute pass/fail only
 - Fetch coverage: <ok>/<attempted> (<failed> failed)   ← only when failures > 0
 - Normalized for load-config change: <tests, if any>
+
+**Executive HTML:** ./bzm-reports/<scope-slug>-<generated_at>.html
 ```
 
 For an **empty window**, collapse the body to:
@@ -164,4 +234,8 @@ Nothing ran in this window. No executions to report.
 - **`statistics_unavailable` is not a finding.** It means anomaly stats couldn't be read (run too short, or the stats endpoint unavailable) — insufficient data, never "anomalies detected" and never a clean bill.
 - **Don't compare a run to itself.** A green run is never its own baseline — last-passing resolution excludes the candidate, so a still-green regression is detectable whenever any prior pass exists. `baseline_is_only_run` in a test's notes means a *pinned* baseline (conversational or committed file) points at the candidate itself — report "baseline run, no prior to compare", not a 0% move.
 - **Failure criteria live on the test, not the execution.** At digest altitude, lead with the overall verdict and the deltas; reach into `blazemeter_tests read` (failure criteria + labels) only when explaining *why* a specific run failed during a drill-in.
-- **Never persist scope.** The resolved account/workspace/project is conversational memory only. The committed `.blazemeter/baseline.json` is the user's own repo state and a different thing. Scratch files (`pins.json`, `digest.json`) go in the session scratch directory, not the user's repo.
+- **Same template, digest kind at the data-model seam.** Set `kind: "digest"` — that selects the tile band / rollup tree / incidents / coverage section group in the one shipped template at `${CLAUDE_PLUGIN_ROOT}/skills/bzm-report/assets/report-template.html`. Don't fork the renderer or hand-write report HTML.
+- **The HTML repeats the engine's numbers, never new ones.** Tiles, rollups, per-test rows, and coverage are copies (or trivial sums) of sweep fields; `summary` (verdict/headline/narrative) is the only authored block, and it carries no numbers.
+- **Escape `</` before substituting.** The model is injected into a `<script>` tag, so any `</` inside a string value (a test name, a narrative line) must become `<\/` first — otherwise it can close the tag early. This is the only transform the JSON needs.
+- **`generated_at` is supplied, not read.** The template never reads the clock (deterministic render). Provide the current timestamp; `meta.title` and `meta.generated_at` are required.
+- **Never persist scope.** The resolved account/workspace/project is conversational memory only. The committed `.blazemeter/baseline.json` is the user's own repo state and a different thing. Scratch files (`pins.json`, `digest.json`) go in the session scratch directory, not the user's repo; only the final `.html` lands in `./bzm-reports/`.

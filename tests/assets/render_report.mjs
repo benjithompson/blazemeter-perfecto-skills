@@ -59,7 +59,7 @@ function mkEl(tag) {
   return n;
 }
 
-// The section containers the engine writes into (single + portfolio kinds).
+// The section containers the engine writes into (single + portfolio + digest kinds).
 const IDS = [
   "report-generated", "report-title", "report-subtitle", "report-context",
   "report-summary",
@@ -69,6 +69,9 @@ const IDS = [
   // portfolio sections
   "report-portfolio-charts", "report-scorecard", "report-incidents",
   "report-portfolio-sections",
+  // digest sections
+  "digest-tiles", "digest-toolbar", "digest-tree", "digest-incidents",
+  "digest-coverage", "report-digest-sections",
 ];
 const byId = {};
 IDS.forEach((id) => { const n = mkEl("div"); n.id = id; byId[id] = n; });
