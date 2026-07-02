@@ -199,6 +199,10 @@ def test_query_watermark_flux_body_and_result(monkeypatch, influx_env):
     # Tag equalities are emitted sorted, ANDed inside one filter.
     assert 'r["account_id"] == "9" and r["project_id"] == "101"' in flux
     assert '|> last(column: "_time")' in flux
+    # keep must strip value columns BEFORE group(): bzm_run mixes float and
+    # string fields, and grouping mixed-type tables is an Influx schema
+    # collision (HTTP 400).
+    assert flux.index('|> keep(columns: ["_time"])') < flux.index("|> group()")
 
 
 def test_query_watermark_none_when_no_matching_series(monkeypatch, influx_env):
@@ -310,6 +314,10 @@ def test_live_write_two_points_then_watermark_is_the_newer():
 
     Writes two points on a unique series (so reruns never collide), then asserts
     `query_watermark` scoped to that series returns the newer timestamp exactly.
+    The points deliberately mix FLOAT and STRING fields, like real `bzm_run`
+    points do (names ride along as fields) - a watermark query that groups
+    before dropping the value column dies on the type collision (HTTP 400),
+    which an all-float series can never catch.
     """
     writer = bzm_influx.InfluxWriter()
     run_tag = "livetest-%d" % time.time_ns()
@@ -317,8 +325,10 @@ def test_live_write_two_points_then_watermark_is_the_newer():
     older, newer = now - 120, now - 60
     stats = writer.write(
         [
-            "bzm_run,test_id=0,execution_id=%s avg_ms=1.0 %d" % (run_tag, older),
-            "bzm_run,test_id=0,execution_id=%s avg_ms=2.0 %d" % (run_tag, newer),
+            'bzm_run,test_id=0,execution_id=%s avg_ms=1.0,test_name="live check" %d'
+            % (run_tag, older),
+            'bzm_run,test_id=0,execution_id=%s avg_ms=2.0,test_name="live check" %d'
+            % (run_tag, newer),
         ]
     )
     assert stats == bzm_influx.WriteStats(
