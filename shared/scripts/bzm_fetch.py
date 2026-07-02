@@ -20,8 +20,9 @@ Subcommands:
          every in-window run across the scope (idle tests are never touched) ->
          group by testId -> fetch summary/request-stats/anomalies per kept run
          -> resolve each ACTIVE test's baseline (pins > committed file > last
-         passing, via that test's own history) -> compute KPI deltas and
-         verdicts -> write the digest JSON to --out. Stdout is a five-line
+         passing, via that test's own history) -> compute KPI deltas, verdicts,
+         and per-test health chips -> roll entries up into workspace/project
+         nodes -> write the digest JSON to --out. Stdout is a five-line
          human summary.
 
   run-pair  Compare exactly two executions (baseline vs candidate): fetch both
@@ -79,7 +80,7 @@ from pathlib import Path
 
 import bzm_baseline
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3  # v3: sweep gains per-test `health` + `workspaces[]`/`projects[]` rollups
 BASE_URL = "https://a.blazemeter.com/api/v4"
 PAGE_SIZE = 50  # documented max for every v4 list endpoint (see API_NOTES.md)
 USER_AGENT = "perforce-skills-bzm-fetch/1"
@@ -95,6 +96,18 @@ ERROR_SPIKE_PCT = 1.0  # overall error-rate bar for an incident candidate
 ERROR_SPIKE_SEVERE_PCT = 5.0
 ENDPOINT_SPIKE_RATE = 95.0  # a label erroring on >=95% of >=MIN samples
 ENDPOINT_SPIKE_MIN_SAMPLES = 20
+
+# Health chips (codified from the skills' prose thresholds). Order = severity,
+# worst first — a rollup's health is the worst of its members'.
+SLA_CRITICAL_PCT = 60.0
+SLA_AT_RISK_PCT = 90.0
+HEALTH_ORDER = ("critical", "at-risk", "unjudged", "healthy")
+
+# Incident-candidate severity for the rollups' `worst_incident` ref: outright
+# failures, then regressions vs baseline, then error spikes, then anomalies —
+# the same ranking the skills apply in prose.
+INCIDENT_SEVERITY = {"failure": 0, "regression": 1, "error_spike": 2,
+                     "endpoint_error_spike": 3, "anomaly": 4}
 
 
 class FetchError(Exception):
@@ -403,6 +416,47 @@ def anomaly_status(payload: dict | None) -> str:
     return "anomalies_with_details" if count > 0 else "no_anomalies"
 
 
+def anomaly_items(payload: dict | None) -> list[dict]:
+    """The anomaly rows out of /anomalies/stats, whichever shape the API used.
+
+    Seen live: `result.anomalies` is a LIST when empty but an anomalyId-keyed
+    DICT when anomalies exist — normalize both to a list of rows.
+    """
+    if not payload or not isinstance(payload.get("result"), dict):
+        return []
+    anomalies = payload["result"].get("anomalies")
+    if isinstance(anomalies, dict):
+        return list(anomalies.values())
+    return list(anomalies or [])
+
+
+def health_for(kpi_runs: int, passed: int, failed: int, regressed: bool) -> str:
+    """Deterministic health chip for one test's window (schema v3).
+
+    `unjudged` when no run produced a KPI verdict (only inconclusive/partial/
+    running runs) — never "healthy", there is nothing to judge. `critical` on
+    any failing run or SLA compliance (passed/kpi_runs) below 60%; `at-risk`
+    when regressed-while-green or SLA below 90%; else `healthy`.
+    """
+    if kpi_runs == 0:
+        return "unjudged"
+    sla_pct = 100.0 * passed / kpi_runs
+    if failed > 0 or sla_pct < SLA_CRITICAL_PCT:
+        return "critical"
+    if regressed or sla_pct < SLA_AT_RISK_PCT:
+        return "at-risk"
+    return "healthy"
+
+
+def worst_health(healths) -> str:
+    """The worst member health, in HEALTH_ORDER (critical > at-risk > unjudged > healthy)."""
+    healths = set(healths)
+    for h in HEALTH_ORDER:
+        if h in healths:
+            return h
+    return "unjudged"  # an empty group has nothing judged
+
+
 # --- coverage accounting --------------------------------------------------------
 
 
@@ -498,7 +552,7 @@ class Sweeper:
             skip += PAGE_SIZE
         return masters
 
-    def project_context(self, project_id, cache: dict) -> dict:
+    def project_context(self, project_id, cache: dict, workspace_cache: dict) -> dict:
         """Resolve {project, workspace} names for grouping, cached per project id."""
         if project_id in cache:
             return cache[project_id]
@@ -508,11 +562,34 @@ class Sweeper:
             self.cov.ok()
             context["project"] = {"id": project.get("id", project_id), "name": project.get("name")}
             if project.get("workspaceId"):
-                context["workspace"] = {"id": project["workspaceId"], "name": None}
+                ws_id = project["workspaceId"]
+                context["workspace"] = {
+                    "id": ws_id,
+                    "name": self.workspace_name(ws_id, workspace_cache),
+                }
         except Exception as exc:  # noqa: BLE001 - names are cosmetic, ids still group
             self.cov.fail("project", "project:%s" % project_id, exc)
         cache[project_id] = context
         return context
+
+    def workspace_name(self, workspace_id, cache: dict) -> str | None:
+        """Workspace name from /workspaces/{id}, cached per workspace id.
+
+        One request per DISTINCT active workspace (cost scales with activity,
+        never the account's workspace catalog). A failed read degrades to a
+        null name via coverage — the name is cosmetic, the id still groups.
+        """
+        if workspace_id in cache:
+            return cache[workspace_id]
+        try:
+            workspace = self.t.get("/workspaces/%s" % workspace_id).get("result") or {}
+            self.cov.ok()
+            name = workspace.get("name")
+        except Exception as exc:  # noqa: BLE001 - name is cosmetic, id still groups
+            self.cov.fail("workspace", "workspace:%s" % workspace_id, exc)
+            name = None
+        cache[workspace_id] = name
+        return name
 
     def test_name(self, test_id, cache: dict, fallback: str | None) -> str | None:
         """Canonical test name from /tests/{id}, cached; falls back to the run label.
@@ -727,7 +804,7 @@ def judge_test(
             status = anomaly_status(payload)
             entry["anomaly_status"] = status
             if status == "anomalies_with_details":
-                for a in (payload["result"].get("anomalies") or [])[:10]:
+                for a in anomaly_items(payload)[:10]:
                     entry["incident_candidates"].append(
                         {
                             "type": "anomaly",
@@ -737,6 +814,7 @@ def judge_test(
                         }
                     )
 
+    entry["health"] = health_for(len(kpi_runs), passed, entry["failed"], entry["regressed"])
     return entry
 
 
@@ -806,6 +884,88 @@ def _load_pins_and_baseline(args) -> tuple[dict[str, str], dict[str, str]]:
     return pins, baseline_file
 
 
+def _incident_rank(candidate: dict) -> tuple:
+    """Sort key for incident candidates: severity class first, bigger magnitude first."""
+    kind = str(candidate.get("type"))
+    if kind == "regression":
+        magnitude = _move_magnitude(candidate.get("worst_kpi_move"))
+    elif kind == "error_spike":
+        magnitude = candidate.get("error_rate_pct") or 0.0
+    elif kind == "endpoint_error_spike":
+        magnitude = candidate.get("errors_rate_pct") or 0.0
+    else:
+        magnitude = 0.0
+    return (INCIDENT_SEVERITY.get(kind, len(INCIDENT_SEVERITY)), -magnitude)
+
+
+def worst_incident_ref(entries: list[dict]) -> dict | None:
+    """Short ref {type, test_id, execution_id} to the entries' top-severity incident."""
+    best = None
+    for entry in entries:
+        for candidate in entry.get("incident_candidates") or []:
+            rank = _incident_rank(candidate)
+            if best is None or rank < best[0]:
+                best = (
+                    rank,
+                    {
+                        "type": candidate.get("type"),
+                        "test_id": entry["test_id"],
+                        "execution_id": candidate.get("execution_id"),
+                    },
+                )
+    return best[1] if best else None
+
+
+def rollup_nodes(entries: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Aggregate sweep entries into the v3 `workspaces[]` / `projects[]` rollups.
+
+    Grouping keys are the ids already resolved on each entry — derived from
+    whatever context is known, never invented: an entry whose workspace could
+    not be resolved contributes no workspace row (so a project-scoped sweep may
+    yield an empty or single-row `workspaces[]`), and its project row carries a
+    null workspace. A node's health is the worst of its members' (HEALTH_ORDER);
+    `worst_incident` refs the members' top-severity incident candidate.
+    """
+
+    def node(info: dict, members: list[dict]) -> dict:
+        return {
+            "id": info.get("id"),
+            "name": info.get("name"),
+            "runs_in_window": sum(m["runs_in_window"] for m in members),
+            "tests_ran": len(members),
+            "passed": sum(m["passed"] for m in members),
+            "failed": sum(m["failed"] for m in members),
+            "regressed": sum(1 for m in members if m["regressed"]),
+            "inconclusive": sum(m["inconclusive"] for m in members),
+            "health": worst_health(m["health"] for m in members),
+            "worst_incident": worst_incident_ref(members),
+        }
+
+    def sort_key(row: dict) -> tuple:
+        return (HEALTH_ORDER.index(row["health"]), -row["failed"], -row["regressed"], str(row["id"]))
+
+    by_workspace: dict = {}
+    by_project: dict = {}
+    for entry in entries:
+        project = entry["project"]
+        group = by_project.setdefault(
+            project.get("id"), {"info": project, "workspace": entry.get("workspace"), "members": []}
+        )
+        group["members"].append(entry)
+        workspace = entry.get("workspace")
+        if workspace and workspace.get("id") is not None:
+            by_workspace.setdefault(workspace["id"], {"info": workspace, "members": []})[
+                "members"
+            ].append(entry)
+
+    workspaces = sorted((node(g["info"], g["members"]) for g in by_workspace.values()), key=sort_key)
+    projects = sorted(
+        ({**node(g["info"], g["members"]), "workspace": g["workspace"]} for g in by_project.values()),
+        key=sort_key,
+    )
+    return workspaces, projects
+
+
 def cmd_sweep(args, transport) -> int:
     from_ts, to_ts = parse_when(args.from_), parse_when(args.to)
     if from_ts >= to_ts:
@@ -830,6 +990,7 @@ def cmd_sweep(args, transport) -> int:
         by_test.setdefault(str(m.get("testId")), []).append(m)
 
     context_cache: dict = {}
+    workspace_cache: dict = {}
     name_cache: dict = {}
 
     def process(item):
@@ -855,7 +1016,9 @@ def cmd_sweep(args, transport) -> int:
                 sweeper.masters_for_test(test_id, from_ts, stop_when=has_baseline_pass)
                 or in_window
             )
-        context = sweeper.project_context(in_window[0].get("projectId"), context_cache)
+        context = sweeper.project_context(
+            in_window[0].get("projectId"), context_cache, workspace_cache
+        )
         row = {
             "test": {
                 "id": test_id,
@@ -888,12 +1051,15 @@ def cmd_sweep(args, transport) -> int:
     anomalies_unavailable = sum(
         1 for e in entries if e.get("anomaly_status") == "statistics_unavailable"
     )
+    workspace_rollup, project_rollup = rollup_nodes(entries)
     digest = {
         "schema_version": SCHEMA_VERSION,
         "scope": scope,
         "window": {"from": from_ts, "to": to_ts},
         "runs_in_window": len(window_masters),
         "tests_ran": len(entries),
+        "workspaces": workspace_rollup,
+        "projects": project_rollup,
         "tests": entries,
         "coverage": {
             "http_attempted": cov.attempted,
@@ -1230,7 +1396,7 @@ def cmd_history(args, transport) -> int:
                 if status == "anomalies_with_details":
                     entry["anomalies"] = [
                         {"kpi": a.get("kpi"), "label": a.get("labelName")}
-                        for a in (payload["result"].get("anomalies") or [])[:10]
+                        for a in anomaly_items(payload)[:10]
                     ]
         runs.append(entry)
 

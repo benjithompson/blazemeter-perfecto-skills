@@ -30,6 +30,7 @@ Params: `limit` (documented max **50**), `skip` (offset), `sort[]=-updated`
 | Purpose            | Endpoint                                        | Key params            |
 |--------------------|-------------------------------------------------|-----------------------|
 | Workspaces of acct | `/workspaces`                                   | `accountId`           |
+| Workspace read     | `/workspaces/{id}`                              | —                     |
 | Projects of ws     | `/projects`                                     | `workspaceId`         |
 | Tests of project   | `/tests`                                        | `projectId` (only — no workspaceId variant) |
 | Project read       | `/projects/{id}`                                | —                     |
@@ -68,11 +69,17 @@ Params: `limit` (documented max **50**), `skip` (offset), `sort[]=-updated`
   `avgThroughput`, `concurrency`, `hasLabelPassedThresholds`.
 - **Errors report**: per-label items: `labelId`, `name`, `errors[] {rc, m, count}`,
   `assertions[] {name, failureMessage, failures}`, `urls[] {url, count}`.
-- **Anomaly stats**: `result.anomalyCount`, `result.anomalies[] {labelId, labelName,
-  kpi, startTime, endTime, maxSpikeHeight}`. This endpoint is **not in the public API
+- **Anomaly stats**: `result.anomalyCount`, `result.anomalies {labelId, labelName,
+  kpi, startTime, endTime, maxSpikeHeight}`. **Shape caveat (seen live):**
+  `anomalies` is an empty **list** when `anomalyCount` is 0 but an
+  anomalyId-keyed **dict** of those rows when anomalies exist — the engine
+  normalizes both (`anomaly_items`). This endpoint is **not in the public API
   docs** (the MCP calls it via the same v4 base + Basic auth); the engine degrades
   gracefully — a failed/empty response is reported as `statistics_unavailable`,
   never treated as "no anomalies".
+- **Workspace**: `/workspaces/{id}` returns `id`, `name`, `accountId`, `enabled`
+  (verified live). The sweep reads it once per **distinct active** workspace to
+  name the v3 rollups; a failed read degrades to a null name (ids still group).
 - **Test**: `id`, `name`, `projectId`; failure criteria live at
   `configuration.plugins.thresholds.thresholds[]` with `configuration.enableFailureCriteria`.
 - **Account**: AI-consent flag is `aiConsent`. Consent gating is enforced

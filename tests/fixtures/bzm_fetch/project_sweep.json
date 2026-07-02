@@ -9,6 +9,13 @@
       }
     },
     {
+      "path": "/workspaces/11",
+      "response": {
+        "result": { "id": 11, "name": "Retail", "accountId": 9, "enabled": true },
+        "error": null
+      }
+    },
+    {
       "path": "/tests/201",
       "response": {
         "result": { "id": 201, "name": "checkout-flow", "projectId": 101 },
@@ -126,14 +133,15 @@
     },
     {
       "path": "/masters/9101/anomalies/stats",
+      "comment": "Seen live: `anomalies` is an anomalyId-keyed DICT when anomalies exist (a list only when empty).",
       "response": {
         "result": {
           "anomalyCount": 2,
           "affectedLabel": ["/search"],
-          "anomalies": [
-            { "labelId": "L3", "labelName": "/search", "kpi": "p95", "startTime": 1601000, "endTime": 1602000, "maxSpikeHeight": 3.2 },
-            { "labelId": "L3", "labelName": "/search", "kpi": "errors", "startTime": 1601200, "endTime": 1602400, "maxSpikeHeight": 5.1 }
-          ]
+          "anomalies": {
+            "a1f326dd4598": { "anomalyId": "a1f326dd4598", "masterId": "9101", "labelId": "L3", "labelName": "/search", "kpi": "p95", "startTime": 1601000, "endTime": 1602000, "maxSpikeHeight": 3.2 },
+            "b270c387ebdd": { "anomalyId": "b270c387ebdd", "masterId": "9101", "labelId": "L3", "labelName": "/search", "kpi": "errors", "startTime": 1601200, "endTime": 1602400, "maxSpikeHeight": 5.1 }
+          }
         },
         "error": null
       }
