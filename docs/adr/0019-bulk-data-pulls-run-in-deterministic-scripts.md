@@ -70,6 +70,21 @@ fetched only for **active** tests. Cost scales with activity, not catalog size
 of `runs_in_window`; `plan` is now a window census (runs/tests active), which is the
 sweep's true cost driver and the right practicality guard.
 
+**Amendment (2026-07-02) — the census moves back to the MCP; `plan` retired.** bzm-mcp
+v1.3.0 adds account-wide `search` actions to `blazemeter_tests` and
+`blazemeter_execution` (POST `/search`, 50/page with `page_index`, `total` in the
+envelope; filters include `workspace_id_list`, `project_id_list`, name `$ilike`, and a
+time frame — note filtering is day-granular: preset starts snap to midnight, and `custom`
+windows snap both bounds to midnight with the end day exclusive, so callers pass `end_time`
+as the day after the window end). That covers exactly the
+control-plane discovery slice of this ADR: the window census (`total` = runs-in-window
+in one call) and name→id resolution without paging. The `plan` subcommand is deleted;
+skills census via `blazemeter_execution search` in Step 0 instead. **The data-plane
+line is unchanged**: search rows are discovery metadata only — an execution row carries
+no `testId`, no pass/fail status, and no KPIs, and the MCP still exposes no
+summary/request-stats/anomaly/kpi-values report reads — so `sweep`, `history`, and
+`run-pair` (and all deterministic aggregation) stay in the engine.
+
 **What this does not change.** Step 0 Context Resolution stays MCP and interactive
 (including the consent gate — enforced client-side, so it must run *before* the
 engine). Drill-ins stay MCP. The conventions' "MCP-first" posture survives as

@@ -451,21 +451,6 @@ def test_sweep_exceeding_max_failure_rate_exits_nonzero(tmp_path, capsys):
     assert "exceeds --max-failure-rate" in capsys.readouterr().err
 
 
-def test_plan_window_census_counts_runs_without_reports(tmp_path, capsys):
-    transport = FakeTransport.from_fixture("project_sweep.json")
-    args = argparse.Namespace(account_id=None, workspace_id=None, project_id="101",
-                              concurrency=2, from_="1000000", to="2000000")
-    rc = bzm_fetch.cmd_plan(args, transport)
-    assert rc == 0
-    plan = json.loads(capsys.readouterr().out)
-    assert plan["runs_in_window"] == 3 and plan["tests_ran"] == 2
-    assert plan["per_test"][0]["runs"] == 2  # busiest test first
-    assert plan["per_test"][0]["test_id"] == "202"  # string ids, matching the sweep/pins
-    # Census is ONE windowed /masters listing: no catalog, no reports.
-    assert not any(path == "/tests" for path, _ in transport.calls)
-    assert not any("/reports/" in path for path, _ in transport.calls)
-
-
 def _window_scope():
     return {"account_id": "9", "workspace_id": None, "project_id": None}
 
@@ -1032,16 +1017,19 @@ def test_live_intra_run_timeseries_endpoints():
     """
     key_id, key_secret = bzm_fetch.load_credentials()
     t = bzm_fetch.Transport(key_id, key_secret)
-    account_id = (t.get("/user")["result"].get("defaultProject") or {}).get("accountId")
-    if not account_id:
-        pytest.skip("user has no default account to search for a finished run")
-    masters = t.get(
-        "/masters", {"accountId": account_id, "limit": 20, "skip": 0, "sort[]": "-created"}
-    ).get("result") or []
-    ended = [m for m in masters if m.get("ended") and m.get("reportStatus") in ("pass", "fail")]
-    if not ended:
-        pytest.skip("no finished KPI-bearing run in the account's recent history")
-    master_id = str(ended[0]["id"])
+    master_id = os.environ.get("BZM_LIVE_EXECUTION_ID")
+    if not master_id:
+        # No pinned run: fall back to the newest finished run in the default account.
+        account_id = (t.get("/user")["result"].get("defaultProject") or {}).get("accountId")
+        if not account_id:
+            pytest.skip("user has no default account to search for a finished run")
+        masters = t.get(
+            "/masters", {"accountId": account_id, "limit": 20, "skip": 0, "sort[]": "-created"}
+        ).get("result") or []
+        ended = [m for m in masters if m.get("ended") and m.get("reportStatus") in ("pass", "fail")]
+        if not ended:
+            pytest.skip("no finished KPI-bearing run in the account's recent history")
+        master_id = str(ended[0]["id"])
 
     labels = t.get("/data/labels", {"master_id": master_id})
     assert isinstance(labels.get("result"), list)

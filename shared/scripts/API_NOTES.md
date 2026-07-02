@@ -23,7 +23,9 @@ Every list endpoint returns:
 ```
 
 Params: `limit` (documented max **50**), `skip` (offset), `sort[]=-updated`
-(newest-first). `total` enables the one-request census used by `plan`.
+(newest-first). `total` gives a one-request count without paging. (The window
+census itself now lives in the MCP — `blazemeter_execution search`, v1.3.0 —
+not in this engine.)
 
 ## Endpoints used (all plain GETs)
 

@@ -109,7 +109,15 @@ Apply the same rule at **every** level you must resolve (workspace, project, tes
    - **Large / paginated** (the first page comes back full, so more pages exist — common for users
      with very many workspaces, >50) → **do not dump the list**. Ask the user to **name, paste an
      id, or give a filter**. A pasted **id short-circuits** any level (direct `read`); a **name**
-     you resolve by paging and matching.
+     you resolve by paging and matching — except a **test** name, which resolves with one
+     `blazemeter_tests search` (`test_name` + `account_id`, **scoped to the already-confirmed
+     levels** via `workspace_id_list`/`project_id_list` — never unscoped across the account, per
+     §4.1). Two search quirks: pass a **full-history** `custom` window (e.g. `start_time`
+     2000-01-01 → today) because the default `time_frame` only matches tests created **today**;
+     and results come 50/page — if `has_more` is true, page on or ask for a narrower fragment
+     before presenting the multiple-matches menu. Workspaces, projects, and executions have no
+     usable name search (execution names are just the test's display name, and execution search
+     rows carry no test id or status) — those you page and match.
 3. Always show the **id** next to each name so same-named entities are distinguishable and the id is
    locked for the next call.
 
@@ -178,10 +186,15 @@ The variant **reuses every guarantee** of the single-test step — it changes on
    declares. Stop at that level — **do not** descend to a single test.
 3. **Census the window, don't walk the catalog** (ADR-0019, window-first amendment). Do **not**
    page `blazemeter_tests list` over the scope — activity, not catalog size, is the cost driver.
-   Run the engine's window census (`bzm_fetch.py plan` with the scope flag and the resolved
-   window) to learn how many **runs, across how many tests,** fall in the window; idle tests are
-   never touched. A large census (hundreds of in-window runs) is a reason to **offer narrowing**
-   the scope or shortening the window — never silently truncate.
+   Run the MCP window census: one `blazemeter_execution search` (`account_id` always;
+   `workspace_id_list`/`project_id_list` for narrower scopes; **always pass `time_frame`
+   explicitly** — the default `latest` covers only today) and read the response's **`total`** as
+   runs-in-window. Window filtering is day-granular: presets snap the start to midnight, and a
+   `custom` window snaps both bounds to midnight with the **end day exclusive** — pass `end_time`
+   as the day *after* the window end, or the final day's runs are dropped.
+   The rows are discovery metadata only (no test ids, verdicts, or KPIs) — the sweep computes
+   `tests_ran` and everything downstream. A large census (hundreds of in-window runs) is a reason
+   to **offer narrowing** the scope or shortening the window — never silently truncate.
 4. **Honor the per-account AI Consent gate** (§4.4) on the resolved account before invoking the
    engine, the same as the single-test step.
 5. **Display the resolved scope and the window census** before acting — the cross-test analogue
@@ -192,7 +205,7 @@ The variant **reuses every guarantee** of the single-test step — it changes on
    Workspace:  <workspace name>  (ID: <workspace_id>)
    Account:    <account name>  (ID: <account_id>)
    Window:     <from> → <to>
-   Activity:   <N> runs across <M> tests in the window
+   Activity:   <N> runs in the window
    ```
 
 6. **Carry the resolved scope forward** as conversational memory and **never persist it** (§4.6),
@@ -206,8 +219,12 @@ census its window**. Same don't-assume guarantees, one fewer level of narrowing.
 - Prefer the **BlazeMeter MCP** tools (`blazemeter_*`) for the **control plane**: Step 0 scope
   resolution and its interactive picks, the AI-consent gate, anything that mutates, and
   **single-object drill-ins** (one test, one execution's reports when the user asks about *that*
-  run). The [bzm-mcp repo](https://github.com/Blazemeter/bzm-mcp) is the source of truth for what
-  the MCP can do.
+  run). Since MCP v1.3.0 the control plane also includes **account-wide discovery**: the `search`
+  actions on `blazemeter_tests` and `blazemeter_execution` (name lookups, window censuses via the
+  response's `total`). Their rows are discovery metadata only — no test ids on execution rows, no
+  verdicts, no KPIs — so they do not move the data-plane line below. The
+  [bzm-mcp repo](https://github.com/Blazemeter/bzm-mcp) is the source of truth for what the MCP
+  can do.
 - **Bulk data-plane reads go to the shared deterministic engine, not the MCP** (ADR-0019). The
   line is **structural, decidable before the first call**: any *data-driven fan-out* — "for each
   X, list/read Y" where the iteration count comes from data rather than from the user's pick —
