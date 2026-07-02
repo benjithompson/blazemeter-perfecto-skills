@@ -214,6 +214,20 @@ def test_watermark_from_csv_takes_newest_across_tables_and_drops_fractions():
     assert bzm_influx.watermark_from_csv("") is None
 
 
+def test_watermark_from_csv_raises_on_flux_error_table():
+    # Influx can answer HTTP 200 with an error table (error,reference columns);
+    # sync must see a failure, never "no data" (which would silently fall back).
+    text = (
+        "#datatype,string,long\n"
+        "#group,true,true\n"
+        "#default,,\n"
+        ",error,reference\n"
+        ',compilation failed: loc 1:1,"897"\n'
+    )
+    with pytest.raises(bzm_influx.InfluxQueryError, match="compilation failed"):
+        bzm_influx.watermark_from_csv(text)
+
+
 def test_build_watermark_flux_escapes_quotes_and_skips_empty_filter():
     flux = bzm_influx.build_watermark_flux(
         bucket='b"kt', measurement="bzm_run", tag_filters={"name": 'say "hi"\\'}
@@ -264,7 +278,7 @@ def test_cli_help_smokes():
 
 
 def test_cli_without_command_prints_help(capsys):
-    assert bzm_influx.main([]) == 1
+    assert bzm_influx.main([]) == 2
     assert "check" in capsys.readouterr().out
 
 

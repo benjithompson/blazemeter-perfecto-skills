@@ -713,12 +713,16 @@ def is_archived_report(payload: dict | None) -> bool:
 
 
 def _http_error_is_archived(exc: urllib.error.HTTPError) -> bool:
-    """True when a 4xx body carries the archived-report error message."""
+    """True when a 4xx body carries the archived-report error message.
+
+    Matches the specific phrase, not the bare word - an unrelated error that
+    merely mentions "archived" must stay a fetch failure, not a data condition.
+    """
     try:
         body = exc.read().decode("utf-8", "replace")
     except (OSError, ValueError):
         return False
-    return "archived" in body.lower()
+    return "report is archived" in body.lower()
 
 
 def _lp_escape_tag(value) -> str:
@@ -726,19 +730,23 @@ def _lp_escape_tag(value) -> str:
     return str(value).replace(",", "\\,").replace("=", "\\=").replace(" ", "\\ ")
 
 
-def _lp_field(key, value) -> str:
+def _lp_field(key, value) -> str | None:
     """One `key=value` field pair, its type pinned by key (see LP_INTEGER_FIELDS).
 
     Strings are quoted with `"`/`\\` escaped; integer fields carry the `i`
     suffix; everything else numeric is a float (rounded to 6 places so float
-    noise never lands in the database).
+    noise never lands in the database). A non-finite float (NaN/Infinity can
+    arrive verbatim from a JSON body) is invalid line protocol - omitted.
     """
     if isinstance(value, str):
         quoted = '"%s"' % value.replace("\\", "\\\\").replace('"', '\\"')
         return "%s=%s" % (_lp_escape_tag(key), quoted)
     if key in LP_INTEGER_FIELDS:
         return "%s=%di" % (_lp_escape_tag(key), int(value))
-    return "%s=%s" % (_lp_escape_tag(key), repr(round(float(value), 6)))
+    number = float(value)
+    if not math.isfinite(number):
+        return None
+    return "%s=%s" % (_lp_escape_tag(key), repr(round(number, 6)))
 
 
 def lp_line(measurement: str, tags: dict, fields: dict, ts: int) -> str | None:
@@ -754,7 +762,12 @@ def lp_line(measurement: str, tags: dict, fields: dict, ts: int) -> str | None:
         for k, v in sorted(tags.items())
         if v is not None
     )
-    field_parts = [_lp_field(k, v) for k, v in sorted(fields.items()) if v is not None]
+    field_parts = [
+        part
+        for k, v in sorted(fields.items())
+        if v is not None
+        if (part := _lp_field(k, v)) is not None
+    ]
     if not field_parts:
         return None
     return "%s%s %s %d" % (
@@ -807,10 +820,15 @@ def export_point_lines(
     t0 = points[0]["ts"]
     lines = []
     for i, offset in enumerate(curve["offset_s"]):
+        # At stride 1 curve[i] maps to points[i]. A bucket with no sample count
+        # is a collection gap: hits/error rate would come back as fabricated 0s
+        # from the phase arithmetic - null them so a gap never charts as an
+        # outage (an all-null bucket then emits no line at all).
+        has_samples = points[i].get("n") is not None
         fields = {
             "users": curve["users"][i],
-            "hits_per_s": curve["hits_per_s"][i],
-            "error_rate_pct": curve["error_rate_pct"][i],
+            "hits_per_s": curve["hits_per_s"][i] if has_samples else None,
+            "error_rate_pct": curve["error_rate_pct"][i] if has_samples else None,
             "avg_ms": curve["avg_ms"][i],
             "p95_ms": curve["p95_ms"][i],
         }
@@ -1972,17 +1990,31 @@ def cmd_export(args, transport) -> int:
             )
             return 2
 
+    if args.out and not args.dry_run:
+        print("note: --out is only written with --dry-run; pushing to InfluxDB instead", file=sys.stderr)
+
     now = int(time.time())
     if args.sync:
-        watermark = influx.query_watermark(
-            measurement=EXPORT_RUN_MEASUREMENT, tag_filters=_export_tag_filters(scope)
-        )
+        try:
+            watermark = influx.query_watermark(
+                measurement=EXPORT_RUN_MEASUREMENT, tag_filters=_export_tag_filters(scope)
+            )
+        except Exception as exc:  # a failed watermark read must never masquerade as "no data"
+            print("error: watermark query failed: %s" % exc, file=sys.stderr)
+            return 3
         to_ts = now
         # No watermark = a fresh bucket: fall back to the default window, never a
         # full-history walk without an explicit --from.
         from_ts = (
             watermark - args.lookback if watermark is not None else now - DEFAULT_EXPORT_WINDOW_S
         )
+        if from_ts >= to_ts:
+            print(
+                "error: sync window is empty (watermark - lookback is not before now) - "
+                "check for clock skew or raise --lookback",
+                file=sys.stderr,
+            )
+            return 2
     else:
         to_ts = parse_when(args.to) if args.to else now
         from_ts = parse_when(args.from_) if args.from_ else to_ts - DEFAULT_EXPORT_WINDOW_S
@@ -2119,11 +2151,11 @@ def cmd_export(args, transport) -> int:
 # --- CLI ------------------------------------------------------------------------
 
 
-def _add_scope_args(parser: argparse.ArgumentParser) -> None:
+def _add_scope_args(parser: argparse.ArgumentParser, verb: str = "sweep") -> None:
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--account-id", help="sweep the whole account")
-    group.add_argument("--workspace-id", help="sweep one workspace")
-    group.add_argument("--project-id", help="sweep one project")
+    group.add_argument("--account-id", help="%s the whole account" % verb)
+    group.add_argument("--workspace-id", help="%s one workspace" % verb)
+    group.add_argument("--project-id", help="%s one project" % verb)
     parser.add_argument("--concurrency", type=int, default=8, help="parallel fetches (default 8)")
 
 
@@ -2202,7 +2234,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Export a scope's ended runs (+ intra-run curves) as InfluxDB line "
         "protocol: push via bzm_influx, or --dry-run --out for a .lp file.",
     )
-    _add_scope_args(p_export)
+    _add_scope_args(p_export, verb="export")
     p_export.add_argument(
         "--from",
         dest="from_",

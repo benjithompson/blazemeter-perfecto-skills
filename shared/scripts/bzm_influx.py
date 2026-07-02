@@ -71,6 +71,10 @@ QUERY_HEADERS = {
 }
 
 
+class InfluxQueryError(Exception):
+    """The query API answered, but with a Flux error table instead of data."""
+
+
 class InfluxConfigError(Exception):
     """Missing/incomplete environment configuration. Names the variable, never a value."""
 
@@ -291,12 +295,20 @@ def watermark_from_csv(text: str) -> int | None:
     """
     newest: int | None = None
     time_idx: int | None = None
+    error_idx: int | None = None
     for row in csv.reader(io.StringIO(text)):
         if not row or row[0].startswith("#"):
             continue
-        if "_time" in row:
-            time_idx = row.index("_time")
+        if "_time" in row or "error" in row:
+            # A header row. Influx can answer HTTP 200 with an error table
+            # (columns error,reference) mid-stream - that must surface as a
+            # failure, never be misread as "no data" (sync would silently
+            # fall back to the default window).
+            time_idx = row.index("_time") if "_time" in row else None
+            error_idx = row.index("error") if "error" in row and "reference" in row else None
             continue
+        if error_idx is not None and error_idx < len(row) and row[error_idx]:
+            raise InfluxQueryError(row[error_idx])
         if time_idx is None or time_idx >= len(row) or not row[time_idx]:
             continue
         ts = _rfc3339_to_epoch(row[time_idx])
@@ -358,7 +370,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not getattr(args, "command", None):
         parser.print_help()
-        return 1
+        return 2
     try:
         return args.func(args)
     except InfluxConfigError as exc:

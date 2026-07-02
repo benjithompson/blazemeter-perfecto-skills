@@ -1068,7 +1068,8 @@ GOLDEN_EXPORT_LINES = [
     'throughput_rps=8.4,workspace_name="Retail" 1603600' % EXPORT_RUN_TAGS_9101,
     "bzm_run_point,%s avg_ms=100.0,error_rate_pct=0.0,hits_per_s=1.0,p95_ms=200.0,"
     "users=10i 1500000" % EXPORT_RUN_TAGS_9001,
-    "bzm_run_point,%s hits_per_s=0.0 1500060" % EXPORT_RUN_TAGS_9001,
+    # The fixture's 1500060 bucket is {"ts": ...} only - a collection gap. It must
+    # emit NO line (a fabricated hits_per_s=0.0 would chart as an outage).
     "bzm_run_point,%s avg_ms=150.0,error_rate_pct=5.0,hits_per_s=2.0,p95_ms=300.0,"
     "users=20i 1500120" % EXPORT_RUN_TAGS_9001,
     "bzm_run_point,%s avg_ms=800.0,error_rate_pct=10.0,hits_per_s=2.0,p95_ms=1900.0,"
@@ -1076,6 +1077,37 @@ GOLDEN_EXPORT_LINES = [
     "bzm_run_point,%s avg_ms=1000.0,error_rate_pct=50.0,hits_per_s=2.0,p95_ms=2400.0,"
     "users=10i 1600060" % EXPORT_RUN_TAGS_9101,
 ]
+
+
+def test_export_point_lines_gap_bucket_emits_no_line():
+    # A datapoint with only a timestamp is a collection gap: no fabricated 0s.
+    points = [
+        {"ts": 1500000, "n": 60, "na": 10, "t_avg": 100.0, "t_pec95": 200.0},
+        {"ts": 1500060},
+        {"ts": 1500120, "n": 120, "na": 20, "t_avg": 150.0, "t_pec95": 300.0},
+    ]
+    lines = bzm_fetch.export_point_lines({"execution_id": "1"}, points)
+    assert len(lines) == 2
+    assert not any(" 1500060" in line for line in lines)
+    assert not any("hits_per_s=0.0" in line for line in lines)
+
+
+def test_lp_field_omits_non_finite_floats():
+    line = bzm_fetch.lp_line("m", {"t": "1"}, {"ok": 1.5, "bad": float("nan"), "worse": float("inf")}, 10)
+    assert line == "m,t=1 ok=1.5 10"
+    assert bzm_fetch.lp_line("m", {"t": "1"}, {"bad": float("nan")}, 10) is None
+
+
+def test_http_error_is_archived_requires_the_specific_phrase():
+    def http_error(body: bytes) -> urllib.error.HTTPError:
+        return urllib.error.HTTPError("u", 422, "Unprocessable", {}, io.BytesIO(body))
+
+    assert bzm_fetch._http_error_is_archived(
+        http_error(b'{"error": {"message": "Execution report is archived."}}')
+    )
+    assert not bzm_fetch._http_error_is_archived(
+        http_error(b'{"error": {"message": "Workspace was archived by an admin"}}')
+    )
 
 
 def test_lp_line_escapes_sorts_and_types_fields():
@@ -1154,7 +1186,7 @@ def test_export_dry_run_emits_golden_line_protocol(tmp_path, capsys):
     out = capsys.readouterr().out
     assert out.count("\n") == 5  # five-line human summary
     assert "export: 4 ended runs in window [1000000, 2000000) (1 still running skipped) -> 2 exported" in out
-    assert "lines: 2 bzm_run + 5 bzm_run_point (curves for 2/2 runs)" in out
+    assert "lines: 2 bzm_run + 4 bzm_run_point (curves for 2/2 runs)" in out
     assert "skipped: 1 archived | 1 no KPIs | 0 fetch failed" in out
     assert "wrote" in out
 
@@ -1194,10 +1226,10 @@ def test_export_sync_mode_scans_from_watermark_minus_lookback(tmp_path, monkeypa
     # Push: run lines to the default bucket, point lines to --points-bucket.
     assert stub.writer_init == {"bucket": "bzm", "points_bucket": "bzm-points"}
     assert [w["bucket"] for w in stub.writes] == [None, "bzm-points"]
-    assert [len(w["lines"]) for w in stub.writes] == [2, 5]
+    assert [len(w["lines"]) for w in stub.writes] == [2, 4]
     assert all(l.startswith("bzm_run,") for l in stub.writes[0]["lines"])
     assert all(l.startswith("bzm_run_point,") for l in stub.writes[1]["lines"])
-    assert "pushed 7/7 lines to InfluxDB (0 failed batches, 0 retries)" in capsys.readouterr().out
+    assert "pushed 6/6 lines to InfluxDB (0 failed batches, 0 retries)" in capsys.readouterr().out
 
 
 def test_export_sync_without_watermark_falls_back_to_default_window(tmp_path, monkeypatch):
@@ -1270,7 +1302,7 @@ def test_export_curve_pull_failure_counts_but_run_line_survives(tmp_path, capsys
     rc, lines, _ = run_export(tmp_path, transport=transport)
     assert rc == 0  # curves degrade, never fail the export
     assert [l for l in lines if l.startswith("bzm_run,")] == GOLDEN_EXPORT_LINES[:2]
-    assert [l for l in lines if l.startswith("bzm_run_point,")] == GOLDEN_EXPORT_LINES[2:5]
+    assert [l for l in lines if l.startswith("bzm_run_point,")] == GOLDEN_EXPORT_LINES[2:4]
     assert "curves for 1/2 runs" in capsys.readouterr().out
 
 
