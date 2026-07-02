@@ -101,6 +101,42 @@ tbody tr:hover { background: var(--brand-surface); }
   position: absolute; z-index: 10; pointer-events: none; background: var(--brand-text); color: #fff;
   padding: 5px 9px; border-radius: 6px; font-size: 12px; line-height: 1.35; box-shadow: 0 2px 8px rgba(0,0,0,.25);
 }
+/*
+ * Digest executive rollup (kind: "digest"): the KPI tile band, the collapsible
+ * workspace → project → test tree, and the coverage footer. Every digest-only
+ * rule is namespaced .digest-* so the other kinds can never be restyled; health
+ * chips and severity dots reuse the shared status classes above — no new hues.
+ */
+.digest-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 12px 0 4px; }
+@media (max-width: 760px) { .digest-tiles { grid-template-columns: repeat(2, 1fr); } }
+.digest-tile { background: var(--brand-bg); border: 1px solid var(--brand-border); border-radius: 10px; padding: 12px 14px; }
+.digest-tile-label { font-size: 12px; font-weight: 600; color: var(--brand-muted); }
+.digest-tile-value { font-size: 26px; font-weight: 600; line-height: 1.25; margin-top: 2px; }
+.digest-tile-note { font-size: 12px; color: var(--brand-muted); margin-top: 2px; }
+.digest-tile-note .sev-dot { display: inline-block; vertical-align: middle; margin-right: 5px; }
+.digest-value-bad { color: var(--brand-bad); }
+.digest-value-warn { color: var(--brand-warn); }
+.digest-value-muted { color: var(--brand-muted); }
+.digest-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 14px; margin-bottom: 8px; font-size: 13px; }
+.digest-toggle { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; user-select: none; font-weight: 600; }
+.digest-toggle input { accent-color: var(--brand-primary); }
+.digest-toggle-note { color: var(--brand-muted); }
+.digest-node { border: 1px solid var(--brand-border); border-radius: 8px; background: var(--brand-bg); margin: 8px 0; }
+.digest-node-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 9px 12px; cursor: pointer; list-style: none; }
+.digest-node-head::-webkit-details-marker { display: none; }
+.digest-caret { display: inline-block; transition: transform .12s ease; color: var(--brand-muted); font-size: 11px; }
+.digest-node[open] > .digest-node-head .digest-caret { transform: rotate(90deg); }
+.digest-node-kind { font-size: 11px; font-weight: 600; letter-spacing: .6px; color: var(--brand-muted); text-transform: uppercase; }
+.digest-node-name { font-weight: 600; }
+.digest-node-stats { color: var(--brand-muted); font-size: 12.5px; margin-left: auto; }
+.digest-node-body { padding: 2px 12px 10px; }
+.digest-node-body > .digest-node { background: var(--brand-surface); }
+.digest-sort-th { cursor: pointer; user-select: none; }
+.digest-sorted-asc::after { content: " ▲"; font-size: 10px; }
+.digest-sorted-desc::after { content: " ▼"; font-size: 10px; }
+.digest-coverage-list { list-style: none; padding: 0; margin: 0; }
+.digest-coverage-list li { padding: 5px 0; border-bottom: 1px solid var(--brand-border); }
+.digest-coverage-list li:last-child { border-bottom: 0; }
 .reg-list { list-style: none; padding: 0; margin: 0; }
 .reg-item { display: flex; align-items: baseline; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--brand-border); }
 .reg-item:last-child { border-bottom: 0; }
@@ -134,15 +170,19 @@ tbody tr:hover { background: var(--brand-surface); }
   <p class="subtitle" id="report-subtitle"></p>
   <div class="card context" id="report-context"></div>
 
+  <!-- kind: "digest" — the executive KPI tile band sits above the summary -->
+  <section class="digest-tiles" id="digest-tiles" hidden></section>
+
   <h2>Executive Summary</h2>
   <div class="card" id="report-summary"></div>
 
   <!--
-    Two report kinds share this one template (new report types are added at the
+    Three report kinds share this one template (new report types are added at the
     same data-model seam, not by forking the renderer). The model's `kind` selects which
     section group renders: "single" (default/absent) → the cross-run trend & regression view
-    for ONE test; "portfolio" → the cross-test scorecard over MANY tests. The engine below
-    dispatches on `kind`, unhides the matching group, and leaves the other hidden.
+    for ONE test; "portfolio" → the cross-test scorecard over MANY tests; "digest" → the
+    executive daily rollup (KPI tiles, workspace → project → test tree, incidents, coverage).
+    The engine below dispatches on `kind`, unhides the matching group, and leaves the others hidden.
   -->
 
   <!-- kind: "single" (default) — one test, many runs over a window -->
@@ -173,6 +213,21 @@ tbody tr:hover { background: var(--brand-surface); }
 
     <h2>Top incidents</h2>
     <div class="card" id="report-incidents"></div>
+  </div>
+
+  <!-- kind: "digest" — executive daily rollup: results per workspace → project → test -->
+  <div id="report-digest-sections" hidden>
+    <h2>Results rollup</h2>
+    <div class="card">
+      <div class="digest-toolbar" id="digest-toolbar"></div>
+      <div id="digest-tree"></div>
+    </div>
+
+    <h2>Top incidents</h2>
+    <div class="card" id="digest-incidents"></div>
+
+    <h2>Coverage &amp; data honesty</h2>
+    <div class="card" id="digest-coverage"></div>
   </div>
 
   <footer class="report-footer">
@@ -290,6 +345,16 @@ tbody tr:hover { background: var(--brand-surface); }
     var ctx = (model.meta && model.meta.context) || {};
     var pairs = [["Account", ctx.account], ["Workspace", ctx.workspace], ["Project", ctx.project], ["Test", ctx.test]];
     var any = false;
+    // Digest scope is a plain string ("Whole account" / "Workspace X" / "Project Y").
+    if (ctx.scope) {
+      any = true;
+      var sspan = document.createElement("span");
+      var sb = document.createElement("b");
+      sb.textContent = "Scope";
+      sspan.appendChild(sb);
+      sspan.appendChild(document.createTextNode(" " + ctx.scope));
+      host.appendChild(sspan);
+    }
     pairs.forEach(function (p) {
       var ref = p[1];
       if (!ref || !ref.name) return;
@@ -758,8 +823,10 @@ tbody tr:hover { background: var(--brand-surface); }
   }
 
   // Ranked cross-test incidents (failures, regressions, error spikes, anomalies).
-  function buildIncidents(model) {
-    var host = document.getElementById("report-incidents");
+  // Shared by the portfolio and digest kinds — the digest passes its own host id;
+  // the list is always FLAT (ranked by severity), never nested under the tree.
+  function buildIncidents(model, hostId) {
+    var host = document.getElementById(hostId || "report-incidents");
     var incidents = model.incidents || [];
     if (!incidents.length) { host.appendChild(emptySpan("No incidents flagged.")); return; }
     var ul = document.createElement("ul");
@@ -840,6 +907,339 @@ tbody tr:hover { background: var(--brand-surface); }
     });
   }
 
+  // === DIGEST report kind (kind: "digest") ===================================
+  //
+  // The executive daily rollup: everything that ran in a short window, rolled up
+  // workspace → project → test. Same data-model seam and the same status palette
+  // as the other kinds — no new hues, and no charts (a daily window has no
+  // series). Every number in the model is copied from the sweep engine; only the
+  // summary verdict/headline/narrative is authored prose.
+
+  var DIGEST_HEALTH_ORDER = ["critical", "at-risk", "unjudged", "healthy"];
+
+  function digestHealthRank(h) {
+    var i = DIGEST_HEALTH_ORDER.indexOf((h || "").toLowerCase());
+    return i < 0 ? DIGEST_HEALTH_ORDER.length : i;
+  }
+
+  // A "problem" row: any failing run, a regression, or a critical/at-risk chip.
+  // Works for test rows (regressed: bool) and rollup rows (regressed: count).
+  function digestRowIsProblem(row) {
+    var h = (row.health || "").toLowerCase();
+    return (row.failed || 0) > 0 || (row.regressed || 0) > 0 || h === "critical" || h === "at-risk";
+  }
+
+  function digestTile(label, value, valueClass, noteNodes) {
+    var tile = document.createElement("div");
+    tile.className = "digest-tile";
+    var l = document.createElement("div");
+    l.className = "digest-tile-label";
+    l.textContent = label;
+    tile.appendChild(l);
+    var v = document.createElement("div");
+    v.className = "digest-tile-value" + (valueClass ? " " + valueClass : "");
+    v.textContent = value;
+    tile.appendChild(v);
+    if (noteNodes && noteNodes.length) {
+      var n = document.createElement("div");
+      n.className = "digest-tile-note";
+      noteNodes.forEach(function (x) { n.appendChild(x); });
+      tile.appendChild(n);
+    }
+    return tile;
+  }
+
+  // The executive tile band — exactly six tiles, values copied from the model.
+  function buildDigestTiles(model) {
+    var host = document.getElementById("digest-tiles");
+    if (!host) return;
+    var t = model.tiles || {};
+    function text(s) { return document.createTextNode(s); }
+
+    host.appendChild(digestTile(
+      "Pass rate",
+      t.pass_rate_pct != null ? numStr(t.pass_rate_pct, 1, "%") : "—",
+      t.pass_rate_pct == null ? "digest-value-muted" : "",
+      [text("of judged (pass/fail) runs")]
+    ));
+
+    var failing = t.failing_runs || 0;
+    host.appendChild(digestTile(
+      "Failing runs", numStr(failing, 0),
+      failing > 0 ? "digest-value-bad" : "",
+      [text("failed their own criteria")]
+    ));
+
+    var regressed = t.regressed_tests || 0;
+    host.appendChild(digestTile(
+      "Newly regressed tests", numStr(regressed, 0),
+      regressed > 0 ? "digest-value-warn" : "",
+      [text("still green, worse than baseline")]
+    ));
+
+    host.appendChild(digestTile(
+      "Runs in window", numStr(t.runs_in_window || 0, 0), "",
+      [text("across " + numStr(t.tests_ran || 0, 0) + " tests")]
+    ));
+
+    var incidents = t.incidents || 0;
+    var sev = (t.top_incident_severity || "").toLowerCase();
+    var sevClass = sev === "critical" ? "digest-value-bad"
+      : sev === "warning" ? "digest-value-warn"
+      : "digest-value-muted";
+    var incNote;
+    if (incidents > 0 && sev && sev !== "none") {
+      var dot = document.createElement("span");
+      dot.className = "sev-dot sev-" + ((sev === "critical" || sev === "warning") ? sev : "info");
+      incNote = [dot, text("top severity: " + sev)];
+    } else {
+      incNote = [text("none flagged")];
+    }
+    host.appendChild(digestTile(
+      "Incidents", numStr(incidents, 0),
+      incidents > 0 ? sevClass : "digest-value-muted", incNote
+    ));
+
+    host.appendChild(digestTile(
+      "Unjudged runs", numStr(t.unjudged_runs || 0, 0),
+      (t.unjudged_runs || 0) > 0 ? "" : "digest-value-muted",
+      [text("inconclusive + partial, not judged")]
+    ));
+  }
+
+  function digestStats(row) {
+    var bits = [
+      numStr(row.runs_in_window || 0, 0) + " runs",
+      numStr(row.tests_ran || 0, 0) + " tests",
+      numStr(row.passed || 0, 0) + " passed",
+      numStr(row.failed || 0, 0) + " failed",
+    ];
+    if (row.regressed) bits.push(numStr(row.regressed, 0) + " regressed");
+    if (row.inconclusive) bits.push(numStr(row.inconclusive, 0) + " inconclusive");
+    return bits.join(" · ");
+  }
+
+  // One collapsible tree node (<details> = native expand-in-place, no JS needed).
+  function digestNode(kindLabel, row) {
+    var details = document.createElement("details");
+    details.className = "digest-node";
+    details.setAttribute("open", "open");
+    var head = document.createElement("summary");
+    head.className = "digest-node-head";
+    var caret = document.createElement("span");
+    caret.className = "digest-caret";
+    caret.textContent = "▶";
+    head.appendChild(caret);
+    var kind = document.createElement("span");
+    kind.className = "digest-node-kind";
+    kind.textContent = kindLabel;
+    head.appendChild(kind);
+    var name = document.createElement("span");
+    name.className = "digest-node-name";
+    name.textContent = row.name || (kindLabel + " " + (row.id != null ? row.id : "?"));
+    if (row.id != null) name.title = kindLabel + " " + row.id;
+    head.appendChild(name);
+    head.appendChild(healthPill(row.health));
+    var stats = document.createElement("span");
+    stats.className = "digest-node-stats";
+    stats.textContent = digestStats(row);
+    head.appendChild(stats);
+    details.appendChild(head);
+    var body = document.createElement("div");
+    body.className = "digest-node-body";
+    details.appendChild(body);
+    return { el: details, body: body };
+  }
+
+  // Column definitions for the per-project test table (click-to-sort headers).
+  var DIGEST_TEST_COLS = [
+    { label: "Test", get: function (t) { return (t.name || "").toLowerCase(); } },
+    { label: "Health", get: function (t) { return digestHealthRank(t.health); } },
+    { label: "Runs", get: function (t) { return t.runs != null ? t.runs : -1; } },
+    { label: "Passed", get: function (t) { return t.passed != null ? t.passed : -1; } },
+    { label: "Failed", get: function (t) { return t.failed != null ? t.failed : -1; } },
+    { label: "Worst KPI move", get: function (t) {
+        var m = /-?\d+(\.\d+)?/.exec(t.worst_kpi_move || "");
+        return m ? Math.abs(parseFloat(m[0])) : -1;
+      } },
+    { label: "Baseline", get: function (t) { return (t.baseline_source || "").toLowerCase(); } },
+    { label: "Note", get: function (t) { return (t.note || "").toLowerCase(); } },
+  ];
+
+  function digestTestRow(t) {
+    var tr = document.createElement("tr");
+    var tdName = document.createElement("td");
+    if (t.id != null) tdName.title = "test " + t.id;
+    tdName.textContent = t.name || ("test " + (t.id != null ? t.id : "?"));
+    tr.appendChild(tdName);
+    var tdHealth = document.createElement("td");
+    tdHealth.appendChild(healthPill(t.health));
+    tr.appendChild(tdHealth);
+    [t.runs, t.passed, t.failed].forEach(function (v) {
+      var td = document.createElement("td");
+      numCell(td, v != null ? v : null, 0);
+      tr.appendChild(td);
+    });
+    var tdMove = document.createElement("td");
+    if (t.worst_kpi_move) tdMove.textContent = t.worst_kpi_move; else tdMove.appendChild(mutedDash("—"));
+    tr.appendChild(tdMove);
+    var tdBase = document.createElement("td");
+    if (t.baseline_source) tdBase.textContent = t.baseline_source; else tdBase.appendChild(mutedDash("—"));
+    tr.appendChild(tdBase);
+    var tdNote = document.createElement("td");
+    if (t.note) tdNote.textContent = t.note; else tdNote.appendChild(mutedDash("—"));
+    tr.appendChild(tdNote);
+    return tr;
+  }
+
+  // Sortable test table: clicking a header re-sorts rows in place (asc → desc).
+  function digestTestTable(tests, filterables) {
+    var table = document.createElement("table");
+    var thead = document.createElement("thead");
+    var hrow = document.createElement("tr");
+    var tbody = document.createElement("tbody");
+    var rows = tests.map(function (t) {
+      var tr = digestTestRow(t);
+      filterables.push({ el: tr, problem: digestRowIsProblem(t), test: true });
+      tbody.appendChild(tr);
+      return { t: t, tr: tr };
+    });
+    var sortState = { idx: -1, dir: 1 };
+    var ths = DIGEST_TEST_COLS.map(function (col, idx) {
+      var th = document.createElement("th");
+      th.className = "digest-sort-th";
+      th.textContent = col.label;
+      th.title = "Click to sort";
+      th.addEventListener("click", function () {
+        sortState.dir = sortState.idx === idx ? -sortState.dir : 1;
+        sortState.idx = idx;
+        rows.sort(function (a, b) {
+          var av = col.get(a.t), bv = col.get(b.t);
+          if (av < bv) return -sortState.dir;
+          if (av > bv) return sortState.dir;
+          return 0;
+        });
+        tbody.textContent = "";
+        rows.forEach(function (r) { tbody.appendChild(r.tr); });
+        ths.forEach(function (h, i) {
+          h.className = "digest-sort-th" + (i === idx ? (sortState.dir === 1 ? " digest-sorted-asc" : " digest-sorted-desc") : "");
+        });
+      });
+      hrow.appendChild(th);
+      return th;
+    });
+    thead.appendChild(hrow);
+    table.appendChild(thead);
+    table.appendChild(tbody);
+    return table;
+  }
+
+  // The collapsible workspace → project → test tree with the problems-only
+  // toggle. The workspace level renders only when the model carries workspace
+  // rollup rows (an account-scope digest); narrower scopes start at projects.
+  function buildDigestTree(model) {
+    var host = document.getElementById("digest-tree");
+    var toolbar = document.getElementById("digest-toolbar");
+    if (!host) return;
+    var workspaces = model.workspaces || [];
+    var projects = model.projects || [];
+    var tests = model.tests || [];
+    if (!tests.length) { host.appendChild(emptySpan("No tests ran in this window.")); return; }
+
+    var filterables = []; // {el, problem, test?} — rows/nodes the toggle can hide
+
+    function projectNode(p) {
+      var members = tests.filter(function (t) {
+        return t.project_id != null && p.id != null && String(t.project_id) === String(p.id);
+      });
+      var node = digestNode("Project", p);
+      if (members.length) node.body.appendChild(digestTestTable(members, filterables));
+      else node.body.appendChild(emptySpan("No test rows for this project."));
+      filterables.push({ el: node.el, problem: digestRowIsProblem(p) });
+      return node.el;
+    }
+
+    if (workspaces.length) {
+      var claimed = {};
+      workspaces.forEach(function (w) {
+        var node = digestNode("Workspace", w);
+        projects.forEach(function (p) {
+          if (!p.workspace || w.id == null || String(p.workspace.id) !== String(w.id)) return;
+          claimed[String(p.id)] = true;
+          node.body.appendChild(projectNode(p));
+        });
+        filterables.push({ el: node.el, problem: digestRowIsProblem(w) });
+        host.appendChild(node.el);
+      });
+      // Projects whose workspace could not be resolved still render, top-level.
+      projects.forEach(function (p) {
+        if (!claimed[String(p.id)]) host.appendChild(projectNode(p));
+      });
+    } else {
+      projects.forEach(function (p) { host.appendChild(projectNode(p)); });
+    }
+
+    // Problems-only toggle: default ON when any failure/regression exists.
+    var problemsDefault = tests.some(digestRowIsProblem);
+    var note = document.createElement("span");
+    note.className = "digest-toggle-note";
+
+    function applyFilter(on) {
+      var hiddenTests = 0;
+      filterables.forEach(function (f) {
+        if (on && !f.problem) {
+          f.el.setAttribute("hidden", "hidden");
+          if (f.test) hiddenTests += 1;
+        } else {
+          f.el.removeAttribute("hidden");
+        }
+      });
+      host.className = on ? "digest-problems-on" : "digest-problems-off";
+      note.textContent = on
+        ? (hiddenTests
+            ? hiddenTests + " healthy/unjudged test" + (hiddenTests === 1 ? "" : "s") + " hidden"
+            : "nothing hidden — every test has a problem")
+        : "showing all tests";
+    }
+
+    var label = document.createElement("label");
+    label.className = "digest-toggle";
+    var box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = problemsDefault;
+    if (problemsDefault) box.setAttribute("checked", "checked");
+    box.addEventListener("change", function () { applyFilter(!!box.checked); });
+    label.appendChild(box);
+    label.appendChild(document.createTextNode(" Problems only"));
+    if (toolbar) { toolbar.appendChild(label); toolbar.appendChild(note); }
+    applyFilter(problemsDefault);
+  }
+
+  // Coverage / honesty footer — ALWAYS rendered, zeros included.
+  function buildDigestCoverage(model) {
+    var host = document.getElementById("digest-coverage");
+    if (!host) return;
+    var c = model.coverage;
+    if (!c) { host.appendChild(emptySpan("No coverage data supplied — treat the digest as unverified.")); return; }
+    var ul = document.createElement("ul");
+    ul.className = "digest-coverage-list";
+    function li(head, rest) {
+      var item = document.createElement("li");
+      var b = document.createElement("strong");
+      b.textContent = head;
+      item.appendChild(b);
+      item.appendChild(document.createTextNode(" " + rest));
+      ul.appendChild(item);
+    }
+    var attempted = c.http_attempted || 0, failed = c.http_failed || 0;
+    li("Fetch coverage:", (attempted - failed) + " of " + attempted + " fetches succeeded"
+      + (failed > 0 ? " (" + failed + " failed — the digest is partial)" : ""));
+    li("Partial (aborted/errored) runs skipped:", (c.skipped_partial_runs || 0) + " — KPIs never folded in");
+    li("Inconclusive runs:", (c.inconclusive_runs || 0) + " — not judged, not green");
+    li("Anomaly stats unavailable:", (c.anomalies_unavailable || 0) + " tests — insufficient data, not a finding");
+    host.appendChild(ul);
+  }
+
   // --- orchestration ---------------------------------------------------------
 
   function show(id, on) {
@@ -848,8 +1248,6 @@ tbody tr:hover { background: var(--brand-surface); }
   }
 
   function renderSingle(model) {
-    show("report-single-sections", true);
-    show("report-portfolio-sections", false);
     renderCharts(buildChartSpecs(model));
     buildRuns(model);
     buildRegressions(model);
@@ -858,22 +1256,34 @@ tbody tr:hover { background: var(--brand-surface); }
   }
 
   function renderPortfolio(model) {
-    show("report-single-sections", false);
-    show("report-portfolio-sections", true);
     renderPortfolioCharts(buildPortfolioChartSpecs(model));
     buildScorecard(model);
     buildIncidents(model);
   }
 
+  function renderDigest(model) {
+    buildDigestTiles(model);
+    buildDigestTree(model);
+    // Incidents stay a FLAT ranked list — never nested under the tree.
+    buildIncidents(model, "digest-incidents");
+    buildDigestCoverage(model);
+  }
+
   function render() {
     var model = window.REPORT_DATA || {};
     if (!model.meta) model.meta = {};
-    // Header, context and the executive summary are shared by both report kinds.
+    // Header, context and the executive summary are shared by every report kind.
     buildHeader(model);
     buildContext(model);
     buildSummary(model);
     // Dispatch on the data-model discriminator (the report-type seam).
-    if ((model.kind || "single") === "portfolio") renderPortfolio(model);
+    var kind = model.kind === "portfolio" ? "portfolio" : model.kind === "digest" ? "digest" : "single";
+    show("report-single-sections", kind === "single");
+    show("report-portfolio-sections", kind === "portfolio");
+    show("report-digest-sections", kind === "digest");
+    show("digest-tiles", kind === "digest");
+    if (kind === "portfolio") renderPortfolio(model);
+    else if (kind === "digest") renderDigest(model);
     else renderSingle(model);
   }
 

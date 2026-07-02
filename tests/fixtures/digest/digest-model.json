@@ -1,0 +1,107 @@
+{
+  "kind": "digest",
+  "meta": {
+    "title": "Acme — Daily Digest",
+    "subtitle": "14 runs across 5 tests · last 24h",
+    "generated_at": "2026-07-01T09:00:00Z",
+    "window_start": "2026-06-30T09:00:00Z",
+    "window_end": "2026-07-01T09:00:00Z",
+    "context": {
+      "scope": "Whole account",
+      "account": { "name": "Acme", "id": "10001" },
+      "tests_count": 5
+    }
+  },
+  "summary": {
+    "verdict": "CRITICAL",
+    "headline": "Checkout is failing outright; the rest of the account held steady overnight.",
+    "narrative": [
+      "The checkout flow failed its own criteria on the newest run and needs eyes first.",
+      "Cart regressed against its baseline but stayed green; internal tools produced only inconclusive runs."
+    ]
+  },
+  "tiles": {
+    "pass_rate_pct": 81.8,
+    "failing_runs": 2,
+    "regressed_tests": 1,
+    "runs_in_window": 14,
+    "tests_ran": 5,
+    "incidents": 3,
+    "top_incident_severity": "critical",
+    "unjudged_runs": 3
+  },
+  "workspaces": [
+    {
+      "id": 11, "name": "Retail", "runs_in_window": 9, "tests_ran": 3,
+      "passed": 6, "failed": 2, "regressed": 1, "inconclusive": 0, "health": "critical"
+    },
+    {
+      "id": 12, "name": "Internal Tools", "runs_in_window": 5, "tests_ran": 2,
+      "passed": 3, "failed": 0, "regressed": 0, "inconclusive": 2, "health": "unjudged"
+    }
+  ],
+  "projects": [
+    {
+      "id": 101, "name": "Checkout", "workspace": { "id": 11, "name": "Retail" },
+      "runs_in_window": 6, "tests_ran": 2, "passed": 3, "failed": 2,
+      "regressed": 1, "inconclusive": 0, "health": "critical"
+    },
+    {
+      "id": 102, "name": "Search", "workspace": { "id": 11, "name": "Retail" },
+      "runs_in_window": 3, "tests_ran": 1, "passed": 3, "failed": 0,
+      "regressed": 0, "inconclusive": 0, "health": "healthy"
+    },
+    {
+      "id": 201, "name": "Admin", "workspace": { "id": 12, "name": "Internal Tools" },
+      "runs_in_window": 5, "tests_ran": 2, "passed": 3, "failed": 0,
+      "regressed": 0, "inconclusive": 2, "health": "unjudged"
+    }
+  ],
+  "tests": [
+    {
+      "name": "checkout-flow", "id": "t-9001", "project_id": 101, "health": "critical",
+      "runs": 4, "passed": 1, "failed": 2, "worst_kpi_move": "error rate +26.3 pts",
+      "baseline_source": "last-passing", "note": "newest run failed its criteria"
+    },
+    {
+      "name": "cart-service </checkout>", "id": "t-9002", "project_id": 101, "health": "at-risk",
+      "runs": 2, "passed": 2, "failed": 0, "regressed": true, "worst_kpi_move": "p95 +34%",
+      "baseline_source": "committed file", "note": "regressed while green"
+    },
+    {
+      "name": "search-api", "id": "t-9003", "project_id": 102, "health": "healthy",
+      "runs": 3, "passed": 3, "failed": 0, "baseline_source": "last-passing"
+    },
+    {
+      "name": "admin-portal", "id": "t-9004", "project_id": 201, "health": "healthy",
+      "runs": 3, "passed": 3, "failed": 0, "baseline_source": "committed file"
+    },
+    {
+      "name": "reporting-batch", "id": "t-9005", "project_id": 201, "health": "unjudged",
+      "runs": 2, "passed": 0, "failed": 0, "baseline_source": "no baseline",
+      "note": "only inconclusive runs"
+    }
+  ],
+  "incidents": [
+    {
+      "severity": "critical", "test": "checkout-flow", "run_id": "ex-9911",
+      "kpi": "failure criteria", "detail": "failed criteria; error rate 26.7% vs baseline 0.4%"
+    },
+    {
+      "severity": "warning", "test": "cart-service </checkout>", "run_id": "ex-9812",
+      "kpi": "p95", "detail": "480ms → 642ms (+34%) vs baseline; still green"
+    },
+    {
+      "severity": "info", "test": "search-api", "run_id": "ex-9700",
+      "kpi": "anomaly", "detail": "one-off latency anomaly on /search"
+    }
+  ],
+  "coverage": {
+    "http_attempted": 40,
+    "http_failed": 2,
+    "failures": [ { "url": "/masters/9702/reports", "error": "HTTP 500" } ],
+    "skipped_partial_runs": 1,
+    "inconclusive_runs": 2,
+    "anomalies_unavailable": 1
+  }
+}
