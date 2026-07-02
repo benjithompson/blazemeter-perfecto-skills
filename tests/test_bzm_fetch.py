@@ -542,6 +542,7 @@ def pair_args(tmp_path, **overrides) -> argparse.Namespace:
         candidate_id="5002",
         out=str(tmp_path / "compare.json"),
         no_anomalies=False,
+        timeseries=False,
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
@@ -672,6 +673,8 @@ def history_args(tmp_path, **overrides) -> argparse.Namespace:
         concurrency=2,
         max_failure_rate=0.2,
         no_anomalies=False,
+        timeseries=False,
+        curve_runs=bzm_fetch.DEFAULT_CURVE_RUNS,
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
@@ -805,6 +808,197 @@ def test_history_exceeding_max_failure_rate_exits_nonzero(tmp_path, capsys):
     assert "exceeds --max-failure-rate" in capsys.readouterr().err
 
 
+# --- intra-run timeseries (--timeseries) ---------------------------------------------
+
+
+def minute_points(start=1000, **cols):
+    """Build kpi-values datapoints from parallel column lists (60s buckets)."""
+    length = len(next(iter(cols.values())))
+    return [
+        {"ts": start + 60 * i, **{k: v[i] for k, v in cols.items() if v[i] is not None}}
+        for i in range(length)
+    ]
+
+
+def test_all_label_id_matches_both_naming_conventions():
+    assert bzm_fetch.all_label_id({"result": [{"id": "a1", "name": "ALL"}]}) == "a1"
+    assert bzm_fetch.all_label_id({"result": [{"labelId": "b2", "labelName": "ALL"}]}) == "b2"
+    # No exact-ALL row -> None, never a guess at some other label.
+    assert bzm_fetch.all_label_id({"result": [{"id": "c3", "name": "/checkout"}]}) is None
+    assert bzm_fetch.all_label_id({"result": []}) is None
+    assert bzm_fetch.all_label_id(None) is None
+
+
+def test_series_points_finds_the_datapoint_list_and_sorts_by_ts():
+    payload = {
+        "result": [
+            {
+                "labelId": "a1",
+                "labelName": "ALL",
+                "kpis": [{"ts": 120, "n": 2}, {"ts": 60, "n": 1}, {"n": 99}],
+            }
+        ]
+    }
+    points = bzm_fetch.series_points(payload)
+    assert [p["ts"] for p in points] == [60, 120]  # sorted; the ts-less row dropped
+    assert bzm_fetch.series_points({"result": []}) == []
+    assert bzm_fetch.series_points(None) == []
+
+
+def test_downsample_curve_merges_buckets_with_honest_units():
+    # 130 minute buckets -> stride 3 -> 44 merged columns.
+    points = minute_points(
+        start=0,
+        na=list(range(130)),
+        n=[60] * 130,
+        ec=[0] * 130,
+        t_avg=[100 if i != 1 else 400 for i in range(130)],
+        t_pec95=[300 if i != 4 else 500 for i in range(130)],
+    )
+    curve = bzm_fetch.downsample_curve(points, 60, max_points=60)
+    assert len(curve["offset_s"]) == 44
+    assert curve["offset_s"][:3] == [0, 180, 360]
+    assert curve["users"][0] == 2  # gauge: peak of the merged span
+    assert curve["hits_per_s"][0] == 1.0  # counts: summed over the span, then a rate
+    assert curve["avg_ms"][0] == 200.0  # hits-weighted mean of (100, 400, 100)
+    assert curve["p95_ms"][1] == 500  # percentile: the span's WORST bucket
+    assert curve["hits_per_s"][-1] == 1.0  # last group is a single bucket, span honest
+
+
+def test_downsample_curve_keeps_gaps_null_not_zero():
+    points = [{"ts": 0, "n": 60, "t_avg": 100}, {"ts": 60}]
+    curve = bzm_fetch.downsample_curve(points, 60, max_points=60)
+    assert curve["users"] == [None, None]
+    assert curve["error_rate_pct"][0] == 0.0  # hits with zero errors IS a clean 0%
+    assert curve["error_rate_pct"][1] is None  # no hits -> unknown, never 0
+    assert curve["avg_ms"][1] is None and curve["p95_ms"][1] is None
+
+
+def test_shape_summary_ramp_phases_slope_and_saturation():
+    points = minute_points(
+        na=[5, 10, 15, 20, 20, 20, 20, 20, 20, 20],
+        n=[25, 50, 75, 100, 100, 100, 100, 100, 100, 100],
+        ec=[0] * 10,
+        t_avg=[200, 205, 210, 205, 208, 210, 207, 209, 210, 208],
+        t_pec95=[380, 390, 395, 400, 405, 410, 415, 420, 425, 430],
+    )
+    shape = bzm_fetch.shape_summary(points, 60)
+    assert shape["peak_users"] == 20
+    assert shape["time_to_peak_users_s"] == 180  # first bucket within 5% of peak
+    assert shape["phases"]["ramp"]["buckets"] == 3
+    assert shape["phases"]["steady_early"]["buckets"] == 3
+    assert shape["phases"]["steady_late"]["buckets"] == 4
+    assert shape["phases"]["ramp"]["avg_ms"] == 206.7  # hits-weighted
+    assert shape["p95_slope_ms_per_min"] == 5.0  # exact: p95 climbs 5 ms per steady minute
+    assert shape["rt_spikes"] == [] and shape["error_bursts"] == []
+    # Throughput peaks exactly when users do -> no saturation knee.
+    assert shape["saturation"]["throughput_peak_offset_s"] == 180
+    assert not shape["saturation"]["throughput_peaked_before_users"]
+
+
+def test_shape_summary_flags_spike_burst_and_saturation_knee():
+    points = minute_points(
+        na=[5, 10, 15, 20, 20, 20, 20, 20, 20, 20],
+        n=[100] * 10,  # throughput flat from minute 0 while users still ramp: a knee
+        ec=[0, 0, 0, 0, 0, 50, 0, 0, 0, 0],
+        t_avg=[230, 235, 240, 238, 242, 600, 245, 240, 238, 236],
+        t_pec95=[460, 470, 480, 475, 485, 1200, 490, 480, 476, 472],
+    )
+    shape = bzm_fetch.shape_summary(points, 60)
+    assert [s["offset_s"] for s in shape["rt_spikes"]] == [300]  # >= 2x run median
+    assert shape["rt_spikes"][0]["avg_ms"] == 600 and shape["rt_spikes"][0]["p95_ms"] == 1200
+    assert shape["error_bursts"] == [{"offset_s": 300, "error_rate_pct": 50.0}]
+    assert shape["saturation"]["throughput_peaked_before_users"]
+
+
+def test_shape_summary_short_run_degrades_gracefully():
+    # A 1-minute validation run: one bucket, no ramp, no slope, nothing to split.
+    points = minute_points(na=[1], n=[10], ec=[0], t_avg=[100], t_pec95=[200])
+    shape = bzm_fetch.shape_summary(points, 60)
+    assert shape["phases"]["ramp"] is None
+    assert shape["phases"]["steady_early"]["buckets"] == 1
+    assert shape["phases"]["steady_late"] is None
+    assert shape["p95_slope_ms_per_min"] is None
+    assert bzm_fetch.build_timeseries([]) is None
+
+
+def test_history_timeseries_caps_curves_and_forces_candidate_and_baseline(tmp_path, capsys):
+    # curve-runs=1 selects only the newest KPI run (9401, also the baseline);
+    # the candidate (9301, newest failing) is force-included. 9201/9000 stay
+    # curve-free — fetching them would be a fixture error.
+    rc, history, transport = run_history(tmp_path, timeseries=True, curve_runs=1)
+    assert rc == 0
+    runs = {r["execution_id"]: r for r in history["runs"]}
+
+    ts = runs["9401"]["timeseries"]
+    assert ts["interval_s"] == 60 and ts["buckets"] == 10
+    assert ts["start_ts"] == 1700000
+    assert len(ts["curve"]["offset_s"]) == 10  # under the cap: no downsampling
+    assert ts["curve"]["users"][-1] == 20
+    assert ts["shape"]["p95_slope_ms_per_min"] == 5.0
+    assert ts["shape"]["rt_spikes"] == []
+
+    ts = runs["9301"]["timeseries"]  # labelId/labelName + `values` container variant
+    assert [s["offset_s"] for s in ts["shape"]["rt_spikes"]] == [300]
+    assert ts["shape"]["error_bursts"][0]["error_rate_pct"] == 50.0
+    assert ts["shape"]["saturation"]["throughput_peaked_before_users"]
+
+    assert "timeseries" not in runs["9201"] and "timeseries" not in runs["9000"]
+    assert history["coverage"]["timeseries_unavailable"] == 0
+    assert "timeseries: curves for 2/2 selected runs (interval 60s)" in capsys.readouterr().out
+
+    # Exactly two curve pulls happened: one labels + one kpi-values per selected run.
+    assert sum(1 for p, _ in transport.calls if p == "/data/labels") == 2
+    assert sum(1 for p, _ in transport.calls if p.endswith("/kpi-values")) == 2
+    kpi_value_params = [q for p, q in transport.calls if p.endswith("/kpi-values")]
+    assert all(q == {"id": "label/a3f0/t/pec95", "interval": "60"} for q in kpi_value_params)
+
+
+def test_history_timeseries_pull_failure_degrades_to_note(tmp_path):
+    transport = FakeTransport.from_fixture("test_history.json")
+    transport.routes = [r for r in transport.routes if r["path"] != "/masters/9301/kpi-values"]
+    args = history_args(tmp_path, timeseries=True, curve_runs=1, max_failure_rate=1.0)
+    rc = bzm_fetch.cmd_history(args, transport)
+    history = json.loads(Path(args.out).read_text(encoding="utf-8"))
+    assert rc == 0
+    runs = {r["execution_id"]: r for r in history["runs"]}
+    assert runs["9401"]["timeseries"] is not None
+    assert runs["9301"]["timeseries"] is None
+    assert "timeseries_unavailable" in runs["9301"]["notes"]
+    assert history["coverage"]["timeseries_unavailable"] == 1
+    assert any(f["stage"] == "timeseries" for f in history["coverage"]["failures"])
+
+
+def test_history_without_timeseries_flag_pulls_no_curves(tmp_path):
+    rc, history, transport = run_history(tmp_path)
+    assert rc == 0
+    assert not any(p == "/data/labels" or p.endswith("/kpi-values") for p, _ in transport.calls)
+    assert all("timeseries" not in r for r in history["runs"])
+    assert "timeseries_unavailable" not in history["coverage"]
+
+
+def test_run_pair_timeseries_attaches_both_sides(tmp_path):
+    rc, compare, _ = run_pair(tmp_path, timeseries=True)
+    assert rc == 0
+    assert compare["baseline"]["timeseries"]["shape"]["peak_users"] == 20
+    assert compare["candidate"]["timeseries"]["shape"]["peak_users"] == 10
+    assert len(compare["baseline"]["timeseries"]["curve"]["offset_s"]) == 6
+    assert not any("timeseries_unavailable" in n for n in compare["notes"])
+
+
+def test_run_pair_timeseries_missing_labels_degrades_to_notes(tmp_path):
+    transport = FakeTransport.from_fixture("run_pair.json")
+    transport.routes = [r for r in transport.routes if r["path"] != "/data/labels"]
+    rc, compare, _ = run_pair(tmp_path, transport=transport, timeseries=True)
+    assert rc == 0  # curves degrade, never fail the compare
+    assert compare["baseline"]["timeseries"] is None
+    assert compare["candidate"]["timeseries"] is None
+    assert "baseline_timeseries_unavailable" in compare["notes"]
+    assert "candidate_timeseries_unavailable" in compare["notes"]
+    # The KPI compare itself is untouched.
+    assert compare["kpi_deltas"]["p95"]["adverse"]
+
+
 # --- live drift tripwire (auto-skips without credentials) ----------------------------
 
 _HAVE_CREDS = bool(
@@ -823,3 +1017,46 @@ def test_live_user_and_envelope_shape():
     accounts = t.get("/accounts", {"limit": 1, "skip": 0})
     assert isinstance(accounts.get("result"), list)
     assert "total" in accounts or accounts["result"]  # envelope contract from API_NOTES.md
+
+
+@pytest.mark.live
+@pytest.mark.skipif(not _HAVE_CREDS, reason="no BlazeMeter credentials in the environment")
+def test_live_intra_run_timeseries_endpoints():
+    """Drift tripwire for the two --timeseries endpoints (/data/labels, /kpi-values).
+
+    Pins the doc-derived assumptions the fixtures encode: the labels listing is a
+    flat id/name list containing an aggregate ALL row, and one kpi-values series at
+    interval=60 returns datapoints carrying `ts` plus the multi-KPI field set
+    (na/n/t_avg/t_pec95). Skips (not fails) when the account has no finished run —
+    absence of data is not endpoint drift.
+    """
+    key_id, key_secret = bzm_fetch.load_credentials()
+    t = bzm_fetch.Transport(key_id, key_secret)
+    account_id = (t.get("/user")["result"].get("defaultProject") or {}).get("accountId")
+    if not account_id:
+        pytest.skip("user has no default account to search for a finished run")
+    masters = t.get(
+        "/masters", {"accountId": account_id, "limit": 20, "skip": 0, "sort[]": "-created"}
+    ).get("result") or []
+    ended = [m for m in masters if m.get("ended") and m.get("reportStatus") in ("pass", "fail")]
+    if not ended:
+        pytest.skip("no finished KPI-bearing run in the account's recent history")
+    master_id = str(ended[0]["id"])
+
+    labels = t.get("/data/labels", {"master_id": master_id})
+    assert isinstance(labels.get("result"), list)
+    label_id = bzm_fetch.all_label_id(labels)
+    assert label_id, "no aggregate ALL row in /data/labels — fixtures assume one exists"
+
+    series = t.get(
+        "/masters/%s/kpi-values" % master_id,
+        {"id": "label/%s/t/pec95" % label_id, "interval": bzm_fetch.TIMESERIES_INTERVAL_S},
+    )
+    points = bzm_fetch.series_points(series)
+    assert points, "kpi-values returned no ts-bearing datapoints"
+    assert all(isinstance(p.get("ts"), (int, float)) for p in points)
+    # The multi-KPI field set the curves are built from (t_pec95 was the requested id).
+    sample = {k for p in points for k in p}
+    assert {"na", "n", "t_avg", "t_pec95"} & sample, "datapoints lack the multi-KPI fields"
+    block = bzm_fetch.build_timeseries(points)
+    assert block and len(block["curve"]["offset_s"]) <= bzm_fetch.MAX_CURVE_POINTS

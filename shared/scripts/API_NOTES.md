@@ -41,6 +41,8 @@ Params: `limit` (documented max **50**), `skip` (offset), `sort[]=-updated`
 | Errors report      | `/masters/{id}/reports/errorsreport/data`       | —                     |
 | Request stats      | `/masters/{id}/reports/aggregatereport/data`    | —                     |
 | Anomaly stats      | `/masters/{id}/anomalies/stats`                 | — (**undocumented**)  |
+| Labels of a master | `/data/labels`                                  | `master_id` (**undocumented**; `--timeseries`) |
+| Intra-run series   | `/masters/{id}/kpi-values`                      | `id`, `interval` (`--timeseries`) |
 
 ## Field notes (the ones the engine reads)
 
@@ -77,6 +79,34 @@ Params: `limit` (documented max **50**), `skip` (offset), `sort[]=-updated`
   docs** (the MCP calls it via the same v4 base + Basic auth); the engine degrades
   gracefully — a failed/empty response is reported as `statistics_unavailable`,
   never treated as "no anomalies".
+- **Intra-run timeseries** (`--timeseries` on `history`/`run-pair`; the data behind
+  the platform's live execution charts). **Status: verified against the official
+  help-center "Time-series data" API docs; live verification is pending** — the
+  `live`-marked pytest (`test_live_intra_run_timeseries_endpoints`) pins these
+  assumptions and auto-runs when credentials are present.
+  - `/masters/{id}/kpi-values` — the documented series endpoint. Both params
+    required: `id` = `label/{labelId}/{kpi}/{statistic}` (slashes URL-encoded —
+    `urlencode` already does this) and `interval` ∈ {1, 10, 60} seconds/bucket
+    (docs recommend larger intervals to bound dataset size — the engine always
+    uses **60**). Statistics per KPI: `t` → `avg,min,max,pec50,pec90,pec95,pec99`;
+    `n,na,ec,lt,by` → `avg`; `rc/{code}` per response code. Datapoints carry `ts`
+    (epoch **seconds**) plus the full multi-KPI field set (`n`, `na`, `ec`,
+    `t_min/t_max/t_avg`, `t_pec50/90/95/99`, `lt_avg`, `by_avg`, `ct_avg`) —
+    so ONE series request per run covers every curve the engine builds. The
+    docs don't pin the datapoint container's field name — the engine finds the
+    first list of `ts`-bearing dicts in each `result[]` entry. No pagination.
+  - `/data/labels?master_id={id}` — flat label id/name list for a master
+    (**undocumented**; verified by live route probing only). The engine matches
+    the aggregate row named exactly `ALL`, tolerating both `id`/`name` and
+    `labelId`/`labelName` conventions; whether every run type carries an ALL
+    row is a live-verification unknown — absence degrades to
+    `timeseries_unavailable`, never a guess at another label.
+  - `/masters/{id}/reports/timeline/kpis` (KPI×label catalog tree) and
+    `/api/v4/data/kpis` (multi-master overlay series, what Taurus polls live)
+    exist but are **deliberately unused**: the flat label list is a simpler
+    contract than the tree, and `data/kpis`'s `from`/`to` semantics on
+    *completed* masters are unverified. Revisit `data/kpis` only if per-run
+    `kpi-values` pulls ever become the cost driver.
 - **Workspace**: `/workspaces/{id}` returns `id`, `name`, `accountId`, `enabled`
   (verified live). The sweep reads it once per **distinct active** workspace to
   name the v3 rollups; a failed read degrades to a null name (ids still group).

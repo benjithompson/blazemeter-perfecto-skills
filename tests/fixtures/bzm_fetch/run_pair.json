@@ -1,5 +1,5 @@
 {
-  "comment": "Canned v4 responses for a run-pair compare. Baseline 5001: clean pass at 20 VU (0% errors). Candidate 5002: fails at 10 VU (half the load) with a 26.6% error rate — exercises RPS-per-VU normalization (per-VU throughput identical, so no throughput regression) and the error-rate-from-zero rule (judged in points). Labels: /checkout in both runs (regresses hard), /legacy baseline-only, /new candidate-only. Execution 5003 is a GUI/EUX-style run whose ALL row is all nulls (no load KPIs). Shapes mirror shared/scripts/API_NOTES.md.",
+  "comment": "Canned v4 responses for a run-pair compare. Baseline 5001: clean pass at 20 VU (0% errors). Candidate 5002: fails at 10 VU (half the load) with a 26.6% error rate — exercises RPS-per-VU normalization (per-VU throughput identical, so no throughput regression) and the error-rate-from-zero rule (judged in points). Labels: /checkout in both runs (regresses hard), /legacy baseline-only, /new candidate-only. Execution 5003 is a GUI/EUX-style run whose ALL row is all nulls (no load KPIs). Shapes mirror shared/scripts/API_NOTES.md. Timeseries routes (--timeseries): /data/labels + /kpi-values exist for 5001 and 5002 only (flat six-bucket curves); 5003 has none, so a --timeseries pull for it degrades to timeseries_unavailable.",
   "routes": [
     {
       "path": "/masters/5001",
@@ -99,6 +99,56 @@
     {
       "path": "/masters/5003/anomalies/stats",
       "response": { "result": { "anomalyCount": 0, "affectedLabel": [], "anomalies": [] }, "error": null }
+    },
+    {
+      "path": "/data/labels",
+      "params": {"master_id": "5001"},
+      "response": { "result": [ { "id": "c9d8", "name": "ALL" }, { "id": "e7f6", "name": "/checkout" } ], "error": null }
+    },
+    {
+      "path": "/data/labels",
+      "params": {"master_id": "5002"},
+      "response": { "result": [ { "id": "c9d8", "name": "ALL" }, { "id": "e7f6", "name": "/checkout" } ], "error": null }
+    },
+    {
+      "path": "/masters/5001/kpi-values",
+      "params": {"id": "label/c9d8/t/pec95", "interval": "60"},
+      "response": {
+        "result": [
+          {
+            "labelId": "c9d8", "labelName": "ALL", "kpi": "t", "requestedKpi": "pec95",
+            "kpis": [
+              {"ts": 1500000, "na": 10, "n": 50, "ec": 0, "t_avg": 150, "t_pec50": 135.0, "t_pec95": 300, "t_min": 40, "t_max": 500, "lt_avg": 120.0, "by_avg": 8300},
+              {"ts": 1500060, "na": 20, "n": 100, "ec": 0, "t_avg": 152, "t_pec50": 136.8, "t_pec95": 305, "t_min": 40, "t_max": 505, "lt_avg": 121.6, "by_avg": 8300},
+              {"ts": 1500120, "na": 20, "n": 100, "ec": 0, "t_avg": 151, "t_pec50": 135.9, "t_pec95": 302, "t_min": 40, "t_max": 502, "lt_avg": 120.8, "by_avg": 8300},
+              {"ts": 1500180, "na": 20, "n": 100, "ec": 0, "t_avg": 150, "t_pec50": 135.0, "t_pec95": 300, "t_min": 40, "t_max": 500, "lt_avg": 120.0, "by_avg": 8300},
+              {"ts": 1500240, "na": 20, "n": 100, "ec": 0, "t_avg": 153, "t_pec50": 137.7, "t_pec95": 306, "t_min": 40, "t_max": 506, "lt_avg": 122.4, "by_avg": 8300},
+              {"ts": 1500300, "na": 20, "n": 100, "ec": 0, "t_avg": 151, "t_pec50": 135.9, "t_pec95": 303, "t_min": 40, "t_max": 503, "lt_avg": 120.8, "by_avg": 8300}
+            ]
+          }
+        ],
+        "error": null
+      }
+    },
+    {
+      "path": "/masters/5002/kpi-values",
+      "params": {"id": "label/c9d8/t/pec95", "interval": "60"},
+      "response": {
+        "result": [
+          {
+            "labelId": "c9d8", "labelName": "ALL", "kpi": "t", "requestedKpi": "pec95",
+            "kpis": [
+              {"ts": 1660000, "na": 5, "n": 50, "ec": 13, "t_avg": 320, "t_pec50": 288.0, "t_pec95": 640, "t_min": 40, "t_max": 840, "lt_avg": 256.0, "by_avg": 8300},
+              {"ts": 1660060, "na": 10, "n": 50, "ec": 13, "t_avg": 322, "t_pec50": 289.8, "t_pec95": 645, "t_min": 40, "t_max": 845, "lt_avg": 257.6, "by_avg": 8300},
+              {"ts": 1660120, "na": 10, "n": 50, "ec": 13, "t_avg": 321, "t_pec50": 288.9, "t_pec95": 642, "t_min": 40, "t_max": 842, "lt_avg": 256.8, "by_avg": 8300},
+              {"ts": 1660180, "na": 10, "n": 50, "ec": 13, "t_avg": 320, "t_pec50": 288.0, "t_pec95": 640, "t_min": 40, "t_max": 840, "lt_avg": 256.0, "by_avg": 8300},
+              {"ts": 1660240, "na": 10, "n": 50, "ec": 13, "t_avg": 323, "t_pec50": 290.7, "t_pec95": 646, "t_min": 40, "t_max": 846, "lt_avg": 258.4, "by_avg": 8300},
+              {"ts": 1660300, "na": 10, "n": 50, "ec": 13, "t_avg": 321, "t_pec50": 288.9, "t_pec95": 643, "t_min": 40, "t_max": 843, "lt_avg": 256.8, "by_avg": 8300}
+            ]
+          }
+        ],
+        "error": null
+      }
     }
   ]
 }

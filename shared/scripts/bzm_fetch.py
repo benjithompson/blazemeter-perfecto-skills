@@ -37,6 +37,17 @@ Subcommands:
          anomaly status per run, incident candidates -> write the history JSON
          (size O(runs-kept), oldest-first) to --out. Stdout is a five-line summary.
 
+  Intra-run timeseries (--timeseries, on history and run-pair): additionally pull
+         each selected run's within-run KPI curves — the minute-by-minute data
+         behind the platform's live execution charts — via the ALL label's
+         /kpi-values series (interval=60), and attach a compact `timeseries`
+         block per run: a downsampled curve (column arrays, capped at
+         MAX_CURVE_POINTS buckets) plus a deterministic shape summary (ramp,
+         steady-state phases, p95 slope, spikes, saturation). history caps the
+         pull at the newest --curve-runs KPI runs (candidate and in-window
+         baseline always included) so cost and JSON size stay O(curve-runs),
+         never O(all runs x datapoints).
+
 Credentials (same environment variables the BlazeMeter MCP uses; never on argv,
 never echoed):
 
@@ -66,6 +77,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import math
 import os
 import sys
 import threading
@@ -80,7 +92,7 @@ from pathlib import Path
 
 import bzm_baseline
 
-SCHEMA_VERSION = 3  # v3: sweep gains per-test `health` + `workspaces[]`/`projects[]` rollups
+SCHEMA_VERSION = 4  # v4: optional intra-run `timeseries` blocks on history/run-pair (--timeseries)
 BASE_URL = "https://a.blazemeter.com/api/v4"
 PAGE_SIZE = 50  # documented max for every v4 list endpoint (see API_NOTES.md)
 USER_AGENT = "perforce-skills-bzm-fetch/1"
@@ -102,6 +114,19 @@ ENDPOINT_SPIKE_MIN_SAMPLES = 20
 SLA_CRITICAL_PCT = 60.0
 SLA_AT_RISK_PCT = 90.0
 HEALTH_ORDER = ("critical", "at-risk", "unjudged", "healthy")
+
+# Intra-run timeseries (--timeseries). interval=60 keeps one point per minute —
+# the coarsest bucket /kpi-values documents, and the docs' own recommendation for
+# managing dataset size. Curves are further downsampled to MAX_CURVE_POINTS
+# buckets so a soak run cannot blow up the JSON, and history pulls curves for at
+# most DEFAULT_CURVE_RUNS runs (see --curve-runs).
+TIMESERIES_INTERVAL_S = 60
+MAX_CURVE_POINTS = 60
+DEFAULT_CURVE_RUNS = 5
+RAMP_PEAK_FRACTION = 0.95  # "at peak" = within 5% of the run's max active users
+RT_SPIKE_FACTOR = 2.0  # a bucket's avg RT >= 2x the run median counts as a spike
+ERROR_BURST_MIN_PCT = 5.0  # an error burst must cross 5% in its bucket...
+ERROR_BURST_FACTOR = 2.0  # ...and be at least 2x the run's overall error rate
 
 # Incident-candidate severity for the rollups' `worst_incident` ref: outright
 # failures, then regressions vs baseline, then error spikes, then anomalies —
@@ -430,6 +455,226 @@ def anomaly_items(payload: dict | None) -> list[dict]:
     return list(anomalies or [])
 
 
+# --- intra-run timeseries (pure helpers; endpoint contract in API_NOTES.md) -------
+
+
+def all_label_id(payload: dict | None) -> str | None:
+    """The aggregate ALL label's id out of a /data/labels response, or None.
+
+    Rows are matched on either naming convention (`id`/`name` or
+    `labelId`/`labelName`) since the endpoint is undocumented; anything without
+    an exact-"ALL" name is ignored rather than guessed at.
+    """
+    for row in (payload or {}).get("result") or []:
+        if not isinstance(row, dict):
+            continue
+        name = row.get("name") if "name" in row else row.get("labelName")
+        label_id = row.get("id") if "id" in row else row.get("labelId")
+        if name == "ALL" and label_id is not None:
+            return str(label_id)
+    return None
+
+
+def series_points(payload: dict | None) -> list[dict]:
+    """The datapoint rows out of a /kpi-values response, sorted by `ts`.
+
+    Each `result[]` entry describes one requested series; its datapoints live in
+    a list-valued field whose name is not pinned down by the docs — find the
+    first list of dicts carrying a `ts` and use that. Points without a `ts` are
+    dropped (they cannot be placed on the time axis).
+    """
+    for entry in (payload or {}).get("result") or []:
+        if not isinstance(entry, dict):
+            continue
+        for value in entry.values():
+            if (
+                isinstance(value, list)
+                and value
+                and all(isinstance(p, dict) for p in value)
+                and any("ts" in p for p in value)
+            ):
+                points = [p for p in value if p.get("ts") is not None]
+                return sorted(points, key=lambda p: p["ts"])
+    return []
+
+
+def _phase_stats(points: list[dict], interval_s: int) -> dict | None:
+    """Aggregate KPIs over one phase's minute buckets (None for an empty phase)."""
+    if not points:
+        return None
+    hits = sum(p.get("n") or 0 for p in points)
+    errors = sum(p.get("ec") or 0 for p in points)
+    avg_pairs = [(p["t_avg"], p.get("n") or 0) for p in points if p.get("t_avg") is not None]
+    p95_values = [p["t_pec95"] for p in points if p.get("t_pec95") is not None]
+    weight = sum(w for _, w in avg_pairs)
+    if weight:
+        avg_ms = sum(v * w for v, w in avg_pairs) / weight
+    elif avg_pairs:
+        avg_ms = sum(v for v, _ in avg_pairs) / len(avg_pairs)
+    else:
+        avg_ms = None
+    return {
+        "buckets": len(points),
+        "hits_per_s": round(hits / (len(points) * interval_s), 2),
+        "error_rate_pct": round(100.0 * errors / hits, 2) if hits else None,
+        "avg_ms": round(avg_ms, 1) if avg_ms is not None else None,
+        "p95_ms": round(max(p95_values), 1) if p95_values else None,
+    }
+
+
+def downsample_curve(points: list[dict], interval_s: int, max_points: int = MAX_CURVE_POINTS) -> dict:
+    """Merge minute buckets into <= max_points columns (offsets from the first bucket).
+
+    Merge rules keep each column honest for its unit: hits/errors are counts
+    (summed, then divided by the merged span for a rate), active users is a
+    gauge (peak of the span), avg RT is hits-weighted, and the merged p95 is the
+    span's WORST bucket p95 — averaging percentiles across buckets would
+    understate spikes. Buckets with no data stay null, never a fabricated 0.
+    """
+    stride = max(1, math.ceil(len(points) / max_points))
+    t0 = points[0]["ts"]
+    curve: dict[str, list] = {
+        "offset_s": [], "users": [], "hits_per_s": [], "error_rate_pct": [],
+        "avg_ms": [], "p95_ms": [],
+    }
+    for i in range(0, len(points), stride):
+        group = points[i : i + stride]
+        stats = _phase_stats(group, interval_s)
+        users = [p["na"] for p in group if p.get("na") is not None]
+        curve["offset_s"].append(group[0]["ts"] - t0)
+        curve["users"].append(max(users) if users else None)
+        curve["hits_per_s"].append(stats["hits_per_s"])
+        curve["error_rate_pct"].append(stats["error_rate_pct"])
+        curve["avg_ms"].append(stats["avg_ms"])
+        curve["p95_ms"].append(stats["p95_ms"])
+    return curve
+
+
+def _slope_per_minute(values: list[tuple[float, float]]) -> float | None:
+    """Least-squares slope (per minute) over (minute, value) pairs; None under 3 points."""
+    if len(values) < 3:
+        return None
+    n = len(values)
+    mean_x = sum(x for x, _ in values) / n
+    mean_y = sum(y for _, y in values) / n
+    var_x = sum((x - mean_x) ** 2 for x, _ in values)
+    if var_x == 0:
+        return None
+    cov = sum((x - mean_x) * (y - mean_y) for x, y in values)
+    return round(cov / var_x, 2)
+
+
+def _median(values: list[float]) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) / 2.0
+
+
+def shape_summary(points: list[dict], interval_s: int) -> dict:
+    """Deterministic within-run shape features from the full minute-bucket series.
+
+    Computed on the raw (un-downsampled) buckets so downsampling can never hide
+    a spike. Phases: ramp = buckets before active users first reach 95% of the
+    run's peak; steady = the rest, split in half to expose degradation over the
+    hold. `p95_slope_ms_per_min` is the least-squares p95 slope over the steady
+    phase. Spikes/bursts flag buckets far outside the run's own norm (thresholds
+    in the module constants); saturation flags throughput peaking a bucket or
+    more before users do — the knee the AI should look at.
+    """
+    offsets = [p["ts"] - points[0]["ts"] for p in points]
+    users = [p.get("na") for p in points]
+    peak_users = max((u for u in users if u is not None), default=None)
+
+    ramp_end = 0
+    if peak_users:
+        ramp_end = next(
+            i for i, u in enumerate(users) if (u or 0) >= RAMP_PEAK_FRACTION * peak_users
+        )
+    steady = points[ramp_end:]
+    half = len(steady) // 2
+
+    p95_series = [
+        (offsets[ramp_end + i] / 60.0, p["t_pec95"])
+        for i, p in enumerate(steady)
+        if p.get("t_pec95") is not None
+    ]
+
+    rt_values = [p["t_avg"] for p in points if p.get("t_avg") is not None]
+    rt_median = _median(rt_values)
+    rt_spikes = []
+    if rt_median:
+        rt_spikes = sorted(
+            (
+                {
+                    "offset_s": offsets[i],
+                    "avg_ms": round(p["t_avg"], 1),
+                    "p95_ms": round(p["t_pec95"], 1) if p.get("t_pec95") is not None else None,
+                }
+                for i, p in enumerate(points)
+                if p.get("t_avg") is not None and p["t_avg"] >= RT_SPIKE_FACTOR * rt_median
+            ),
+            key=lambda s: -s["avg_ms"],
+        )[:3]
+
+    total_hits = sum(p.get("n") or 0 for p in points)
+    total_errors = sum(p.get("ec") or 0 for p in points)
+    overall_error_pct = (100.0 * total_errors / total_hits) if total_hits else 0.0
+    error_bursts = []
+    burst_floor = max(ERROR_BURST_MIN_PCT, ERROR_BURST_FACTOR * overall_error_pct)
+    for i, p in enumerate(points):
+        hits = p.get("n") or 0
+        if not hits:
+            continue
+        rate = 100.0 * (p.get("ec") or 0) / hits
+        if rate >= burst_floor:
+            error_bursts.append({"offset_s": offsets[i], "error_rate_pct": round(rate, 2)})
+    error_bursts = sorted(error_bursts, key=lambda b: -b["error_rate_pct"])[:3]
+
+    rates = [(p.get("n") or 0) / interval_s for p in points]
+    peak_rate_idx = max(range(len(rates)), key=lambda i: rates[i]) if any(rates) else None
+    time_to_peak_users_s = offsets[ramp_end] if peak_users else None
+    saturation = None
+    if peak_rate_idx is not None:
+        saturation = {
+            "throughput_peak_offset_s": offsets[peak_rate_idx],
+            "throughput_peaked_before_users": bool(
+                time_to_peak_users_s is not None
+                and offsets[peak_rate_idx] + interval_s < time_to_peak_users_s
+            ),
+        }
+
+    return {
+        "peak_users": peak_users,
+        "time_to_peak_users_s": time_to_peak_users_s,
+        "phases": {
+            "ramp": _phase_stats(points[:ramp_end], interval_s),
+            "steady_early": _phase_stats(steady[: half or len(steady)], interval_s),
+            "steady_late": _phase_stats(steady[half:], interval_s) if half else None,
+        },
+        "p95_slope_ms_per_min": _slope_per_minute(p95_series),
+        "rt_spikes": rt_spikes,
+        "error_bursts": error_bursts,
+        "saturation": saturation,
+    }
+
+
+def build_timeseries(points: list[dict], interval_s: int = TIMESERIES_INTERVAL_S) -> dict | None:
+    """One run's compact `timeseries` block: downsampled curve + shape summary."""
+    if not points:
+        return None
+    return {
+        "interval_s": interval_s,
+        "start_ts": points[0]["ts"],
+        "buckets": len(points),
+        "curve": downsample_curve(points, interval_s),
+        "shape": shape_summary(points, interval_s),
+    }
+
+
 def health_for(kpi_runs: int, passed: int, failed: int, regressed: bool) -> str:
     """Deterministic health chip for one test's window (schema v3).
 
@@ -664,6 +909,35 @@ class Sweeper:
         # means there are no load KPIs to compare — report "unavailable", never a
         # fabricated 0% error rate.
         return kpis if kpis["hits"] else None
+
+    def fetch_timeseries(self, master_id) -> dict | None:
+        """One run's intra-run timeseries block, or None (degrades, never fails).
+
+        Two GETs per run: /data/labels to find the aggregate ALL label, then ONE
+        /kpi-values series for it at interval=60 — each datapoint carries the
+        full KPI field set (users, hits, errors, avg, percentiles), so one
+        request covers every curve. A missing ALL label, empty series, or HTTP
+        failure returns None; callers surface it as `timeseries_unavailable`.
+        """
+        try:
+            labels = self.t.get("/data/labels", {"master_id": master_id})
+            self.cov.ok()
+        except Exception as exc:  # noqa: BLE001 - curves degrade, never fail the pull
+            self.cov.fail("timeseries_labels", "master:%s" % master_id, exc)
+            return None
+        label_id = all_label_id(labels)
+        if label_id is None:
+            return None
+        try:
+            series = self.t.get(
+                "/masters/%s/kpi-values" % master_id,
+                {"id": "label/%s/t/pec95" % label_id, "interval": TIMESERIES_INTERVAL_S},
+            )
+            self.cov.ok()
+        except Exception as exc:  # noqa: BLE001 - curves degrade, never fail the pull
+            self.cov.fail("timeseries", "master:%s" % master_id, exc)
+            return None
+        return build_timeseries(series_points(series))
 
     def fetch_optional(self, path: str, stage: str, master_id) -> dict | None:
         """Errors/aggregate/anomalies: absence degrades the digest, never fails it."""
@@ -1169,6 +1443,10 @@ def cmd_run_pair(args, transport) -> int:
                 "/masters/%s/anomalies/stats", "anomalies", master_id
             )
             run["anomaly_status"] = anomaly_status(payload)
+        if args.timeseries:
+            run["timeseries"] = sweeper.fetch_timeseries(master_id)
+            if run["timeseries"] is None:
+                notes.append("%s_timeseries_unavailable" % side)
         return run, label_rows(agg)
 
     baseline, b_labels = fetch_side("baseline", baseline_id)
@@ -1340,6 +1618,26 @@ def cmd_history(args, transport) -> int:
             )
         )
 
+    # Intra-run curves for a bounded set only: the newest --curve-runs KPI runs,
+    # with the candidate and an in-window baseline always included — cost and
+    # JSON size stay O(curve-runs), never O(all runs x datapoints). Runs outside
+    # the selection simply carry no `timeseries` key (distinct from a selected
+    # run whose pull failed, which is noted `timeseries_unavailable`).
+    timeseries_by_id: dict[str, dict | None] = {}
+    if args.timeseries and kpi_runs:
+        newest_first = sorted(
+            kpi_runs,
+            key=lambda m: (m.get("ended") or 0, str(m.get("id"))),
+            reverse=True,
+        )
+        curve_ids = [str(m.get("id")) for m in newest_first[: max(1, args.curve_runs)]]
+        for forced in (str(candidate["id"]) if candidate else None, baseline["execution_id"]):
+            if forced and forced not in curve_ids and forced in kpi_ids:
+                curve_ids.append(forced)
+        timeseries_by_id = dict(
+            zip(curve_ids, sweeper.pool.map(sweeper.fetch_timeseries, curve_ids))
+        )
+
     runs: list[dict] = []
     incident_candidates: list[dict] = []
     regressed_runs = 0
@@ -1398,6 +1696,10 @@ def cmd_history(args, transport) -> int:
                         {"kpi": a.get("kpi"), "label": a.get("labelName")}
                         for a in anomaly_items(payload)[:10]
                     ]
+            if run_id in timeseries_by_id:
+                entry["timeseries"] = timeseries_by_id[run_id]
+                if entry["timeseries"] is None:
+                    entry["notes"].append("timeseries_unavailable")
         runs.append(entry)
 
     # Per-endpoint spike check on the candidate only; whole-history endpoint
@@ -1452,6 +1754,10 @@ def cmd_history(args, transport) -> int:
             "anomalies_unavailable": anomalies_unavailable,
         },
     }
+    if args.timeseries:
+        history["coverage"]["timeseries_unavailable"] = sum(
+            1 for v in timeseries_by_id.values() if v is None
+        )
 
     out = Path(args.out)
     out.write_text(json.dumps(history, indent=2) + "\n", encoding="utf-8")
@@ -1468,6 +1774,15 @@ def cmd_history(args, transport) -> int:
         "coverage: %d/%d fetches ok (%d failed) | partial runs skipped: %d"
         % (cov.attempted - cov.failed, cov.attempted, cov.failed, len(buckets["partial"]))
     )
+    if args.timeseries:
+        print(
+            "timeseries: curves for %d/%d selected runs (interval %ds)"
+            % (
+                sum(1 for v in timeseries_by_id.values() if v is not None),
+                len(timeseries_by_id),
+                TIMESERIES_INTERVAL_S,
+            )
+        )
     print("wrote %s" % out)
 
     if cov.rate() > args.max_failure_rate:
@@ -1537,6 +1852,11 @@ def main(argv: list[str] | None = None) -> int:
     p_pair.add_argument("--candidate-id", required=True, help="candidate execution (master) id")
     p_pair.add_argument("--out", required=True, help="path for the compare JSON")
     p_pair.add_argument("--no-anomalies", action="store_true", help="skip anomaly-stats fetches")
+    p_pair.add_argument(
+        "--timeseries",
+        action="store_true",
+        help="also pull each run's intra-run KPI curves (downsampled + shape summary)",
+    )
     p_pair.set_defaults(func=cmd_run_pair)
 
     p_history = sub.add_parser(
@@ -1546,6 +1866,19 @@ def main(argv: list[str] | None = None) -> int:
     p_history.add_argument("--test-id", required=True, help="the test whose runs to pull")
     p_history.add_argument(
         "--concurrency", type=int, default=8, help="parallel fetches (default 8)"
+    )
+    p_history.add_argument(
+        "--timeseries",
+        action="store_true",
+        help="also pull intra-run KPI curves (downsampled + shape summary) for the "
+        "newest --curve-runs KPI runs, candidate and in-window baseline included",
+    )
+    p_history.add_argument(
+        "--curve-runs",
+        type=int,
+        default=DEFAULT_CURVE_RUNS,
+        help="how many runs get intra-run curves with --timeseries (default %d)"
+        % DEFAULT_CURVE_RUNS,
     )
     _add_window_args(p_history, out_help="path for the history JSON")
     p_history.set_defaults(func=cmd_history)
