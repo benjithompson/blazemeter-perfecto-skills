@@ -253,9 +253,13 @@ def flux_string(value: str) -> str:
 def build_watermark_flux(*, bucket: str, measurement: str, tag_filters: dict[str, str]) -> str:
     """The Flux query for "newest point matching these tag equalities".
 
-    `group()` merges every matching series into one table, `keep`+`sort`+`last`
-    then yield exactly one `_time` row (or an empty result when nothing matches).
-    Tags are emitted sorted so the query is deterministic and fixture-comparable.
+    `keep` strips every column but `_time` FIRST — a measurement mixes float and
+    string fields (names ride along as fields), and grouping tables of different
+    value types together is a schema collision Influx rejects with HTTP 400.
+    Only then can `group()` merge the matching series into one table, where
+    `sort`+`last` yield exactly one `_time` row (or an empty result when nothing
+    matches). Tags are emitted sorted so the query is deterministic and
+    fixture-comparable.
     """
     parts = [
         "from(bucket: %s)" % flux_string(bucket),
@@ -269,8 +273,8 @@ def build_watermark_flux(*, bucket: str, measurement: str, tag_filters: dict[str
         )
         parts.append("|> filter(fn: (r) => %s)" % equalities)
     parts += [
-        "|> group()",
         '|> keep(columns: ["_time"])',
+        "|> group()",
         '|> sort(columns: ["_time"])',
         '|> last(column: "_time")',
     ]
